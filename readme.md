@@ -1,13 +1,17 @@
-# raw2vtk - RAW to VTK Parallel Preprocessor
+# Dynamic Leaching Simulator (LeachingSim)
 
-This project provides a tool for converting large 3D `.raw` image files into a parallel VTK format uniform grid suitable for futher processing and visualisation. The tool uses MPI for domain decomposition, allowing it to efficiently process datasets that are too large for a single process to handle.
+This repository contains a C++ application for simulating chemical leaching processes in 3D porous media. The code uses a dynamic flow model to simulate pressure-driven fluid flow (Darcy's Law) and the transport of chemical via an advection-diffusion-reaction equation.
 
+The simulation is designed for parallel execution on multi-core workstations or HPC clusters using MPI and the PETSc library. The geometry of the porous medium is defined by a 3D `.raw` image file from a micro-CT scanner. This geometry is discretised as a uniform grid, therefore, simple finite diferences schemes are suitable for quantities calculations.
 
 ## Features
 
-* **Data Type Support:** Natively handles both 8-bit (`unsigned char`) and 16-bit (`unsigned short`) raw data.
-* **Standard Output Format:** Generates VTK Image Data (`.vti`) files for each process and a master Parallel VTK Image Data (`.pvti`) file that groups them for easy loading.
-* **Configurability:** All parameters, including file paths, domain dimensions, and data types, are configurable via command-line arguments.
+* **Parallel Execution** The code is parallelised using MPI.
+* **Advanced Numerical Solvers** Uses the PETSc library for high-performance, scalable linear solves.
+* **Dynamic Flow Model** Simulates fluid flow based on Darcy's Law by solving a pressure equation at each time step.
+* **Coupled Physics** Models species transport using an advection-diffusion-reaction equation, where the advection term is driven by the calculated fluid flow.
+* **Flexible Input** Accepts 3D `.raw` binary files as input for the domain geometry and supports both 8-bit and 16-bit data types.
+* **Standardised Output** Generates parallel VTK (`.pvti` and `.vti`) files, which can be easily visualised in Paraview.
 
 ---
 
@@ -17,6 +21,7 @@ To compile and run this project, you will need the following libraries and tools
 
 * **C++ Compiler:** A modern compiler that supports C++17 (e.g., GCC, Clang, Intel C++).
 * **MPI Implementation:** A standard MPI library such as [OpenMPI](https://www.open-mpi.org/) or [MPICH](https://www.mpich.org/). The `mpicxx` compiler wrapper must be in your PATH.
+* **PETSc**
 * **Boost:** Specifically **Program Options** and **Filesystem** libraries. Your system's package manager can usually provide these (e.g., `libboost-program-options-dev`, `libboost-filesystem-dev`).
 * **VTK:** The development libraries for VTK are required for writing the output files.
 
@@ -31,19 +36,21 @@ The repository is organised as follows. The `release/` (or `debug/`)and `output/
 ├── Makefile           # Build script for the project
 ├── build_on_hpc.sh    # Bash script for building on Imperial's HPC
 ├── hpc_test.pbs       # Example script for running on Imperial's HPC (requires an image file)
-├── src/               # Directory for all C++ source (.cpp) files
-│   ├── main.cpp
-│   ├── Preprocessor.cpp
-│   ├── Domain.cpp
-│   ├── MPIDetails.cpp
-│   ├── MPIDomain.cpp
-│   └── MPIRawLoader.cpp
-├── Preprocessor.h     # Header files are in the root directory
-├── Domain.h
-├── MPIDetails.h
-├── MPIDomain.h
-├── MPIRawLoader.h
-└── compiler_opts.h
+└── src/               # Directory for all C++ source (.cpp) and header (.h) files
+    ├── main.cpp
+    ├── Simulation.cpp
+    ├── Domain.cpp
+    ├── MPIDetails.cpp
+    ├── MPIDomain.cpp
+    ├── MPIRawLoader.cpp
+    ├── utils.cpp
+    ├── Simulation.h
+    ├── Domain.h
+    ├── MPIDetails.h
+    ├── MPIDomain.h
+    ├── MPIRawLoader.h
+    ├── utils.h
+    └── compiler_opts.h
 ```
 
 ---
@@ -65,7 +72,7 @@ The project is built using the provided `Makefile`.
         make uint16
         ```
 
-    The compiled executable (e.g., `raw2vtk_uint8`) will be placed in the `release/` directory.
+    The compiled executable (e.g., `LeachingSim_uint8`) will be placed in the `release/` directory.
 
 ---
 
@@ -78,34 +85,47 @@ The program is executed via the `mpirun` or `mpiexec` command. You must provide 
 Here is an example of processing a 338x338x283 8-bit raw image file using 4 parallel processes:
 
 ```bash
-mpiexec -n 4 ./release/raw2vtk_uint8 \
+mpirun -n 4 ./release/LeachingSim_uint8 \
        --raw-file /path/to/your/image.raw \
-       --x-ext 338 \
-       --y-ext 338 \
-       --z-ext 283 \
+       --xext 338 \
+       --yext 338 \
+       --zext 283 \
+       --dt 1.0 \
+       --tmax 50.0 \
+       --nout 10 \
+       --out_dir ./simulation_output
 ```
 
 ## Command-Line Arguments
 
-| Argument       | Description                                                                    | Required |
-| :------------- | :----------------------------------------------------------------------------- | :------: |
-| `--raw-file`   | The path to the input `.raw` binary file.                                      |  **Yes** |
-| `--x-ext`      | The extent (number of voxels) of the domain in the X dimension.                |  **Yes** |
-| `--y-ext`      | The extent (number of voxels) of the domain in the Y dimension.                |  **Yes** |
-| `--z-ext`      | The extent (number of voxels) of the domain in the Z dimension.                |  **Yes** |
-| `--header-size`| The size of the file header in bytes to skip. Defaults to `0`.                 |    No    |
-| `--output-dir` | The directory where the output VTK files will be saved. Defaults to `./output`. |    No    |
-| `--help, -h`   | Prints the help message and exits.                                             |    No    |
+### Command-Line Arguments
+
+| Argument | Description | Required |
+| :--- | :--- | :---: |
+| `--raw-file` | The path to the input `.raw` binary file. | **Yes** |
+| `--xext` | The extent (number of voxels) of the domain in the X dimension. | **Yes** |
+| `--yext` | The extent (number of voxels) of the domain in the Y dimension. | **Yes** |
+| `--zext` | The extent (number of voxels) of the domain in the Z dimension. | **Yes** |
+| `--dt` | The simulation time step size in seconds. Defaults to `1.0`. | No |
+| `--tmax` | The maximum simulation time in seconds. Defaults to `10.0`. | No |
+| `--nout` | The frequency of output (writes files every N-th time step). Defaults to `1`. | No |
+| `--out_dir` | The directory where output VTK files will be saved. Defaults to `./output`. | No |
+| `--header_size`| The size of the file header in bytes to skip. Defaults to `0`. | No |
+| `--D` | The diffusivity ($m^2/s$). Defaults to `1.0`. | No |
+| `--kreac` | The reaction rate coefficient. Defaults to `1.0`. | No |
+| `--help, -h` | Prints this help message and exits. | No |
 
 ## Input and Output
 ### Input
 The tool expects a single, headerless (or with a skippable header) binary .raw file containing voxel data. The data should be either 8-bit unsigned char or 16-bit unsigned short per voxel, matching the version of the program you compiled.
 
 ### Output
-The program generates a set of files in the specified output directory:
+The program generates a set of files in the specified output directory for each saved time step:
 
-* **A master file**: material_domain.pvti (or a similar name based on the output path).
+* **A master file**: `output_000000.pvti`, `output_000010.pvti`, etc., for each time step.
 
-* **Part files**: material_domain_0.vti, material_domain_1.vti, etc., with one file for each MPI process.
+* **Part files**: `output_0_000000.vti`, `output_1_000000.vti`, etc., with one file for each MPI process.
 
-You can open the single .pvti file in ParaView to visualise the unified domain.
+
+
+You can open the single `.pvti` file in ParaView to visualise results on the unified domain.

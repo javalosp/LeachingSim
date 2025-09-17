@@ -15,4 +15,5 @@ mpiexec -n 8 ./release/LeachingSim_uint8 \
        --dt 0.1 \
        --tmax 100.0 \
        --nout 1 \
+       --kreac 100 \
        --out_dir ./simulation_output

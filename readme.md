@@ -85,7 +85,7 @@ The program is executed via the `mpirun` or `mpiexec` command. You must provide 
 Here is an example of processing a 338x338x283 8-bit raw image file using 4 parallel processes:
 
 ```bash
-mpirun -n 4 ./release/LeachingSim_uint8 \
+mpiexec -n 4 ./release/LeachingSim_uint8 \
        --raw-file /path/to/your/image.raw \
        --xext 338 \
        --yext 338 \
@@ -97,8 +97,6 @@ mpirun -n 4 ./release/LeachingSim_uint8 \
 ```
 
 ## Command-Line Arguments
-
-### Command-Line Arguments
 
 | Argument | Description | Required |
 | :--- | :--- | :---: |

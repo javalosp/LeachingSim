@@ -115,6 +115,8 @@ void Simulation::setupReactionRates()
 	max_grain_id = tmp;
 	num_grains = max_grain_id - Sulphide + 1;
 	ks.assign(num_grains, kreac);
+	cout << "\nin Simulation::setupReactionRates" << endl;
+	cout << "\nSulphide: " << Sulphide << endl;
 }
 
 /**
@@ -148,9 +150,12 @@ void Simulation::setupPETSc()
  */
 void Simulation::initProperties()
 {
-	const double pore_permeability = 1.0e-12;
+	const double pore_permeability = 1.0e-9;
 	const double rock_permeability = 1.0e-18;
 	const double fluid_viscosity = 1.0e-3;
+	// const double air_viscosity = 1.0e-5;
+
+	// TODO: Set material properties parameters in a settings file or command-line
 	for (int k = local.origin.k; k < (local.origin.k + local.extent.k); ++k)
 		for (int j = local.origin.j; j < (local.origin.j + local.extent.j); ++j)
 			for (int i = local.origin.i; i < (local.origin.i + local.extent.i); ++i)
@@ -164,6 +169,9 @@ void Simulation::initProperties()
 					viscosity[idx] = fluid_viscosity;
 					break;
 				case Rock:
+					permeability[idx] = rock_permeability;
+					viscosity[idx] = fluid_viscosity;
+					break;
 				case Sulphide:
 					permeability[idx] = rock_permeability;
 					viscosity[idx] = fluid_viscosity;
@@ -240,6 +248,25 @@ void Simulation::doExchange()
 	saturation.exchangePadding(MPI_DOUBLE);
 }
 
+/**
+ * @brief Builds the PETSc linear system (Ax=b) for the steady-state pressure field.
+ *
+ * This function discretizes the continuity equation combined with Darcy's Law,
+ * This results in a Poisson-like equation for pressure:
+ * $$ \nabla \cdot (-\frac{K}{\mu} \cdot \nabla P) = 0 $$
+ *
+ * Since this formulation is for steady-state, changes in pressure at different
+ * time steps depend on changes on permeability, related to changes in concentration
+ * or in material type (change of Sulphide to Pore in leached voxels)
+ *
+ * A 7-point finite difference stencil is used to construct the matrix A, where the
+ * coefficients are based on the hydraulic transmissivity (permeability divided by
+ * viscosity) between adjacent voxels.
+ *
+ * Boundary conditions are set based on the material type:
+ * - Air: Fixed-pressure (Dirichlet) boundary.
+ * - Rock/Sulphide: No-flow boundary.
+ */
 void Simulation::setupPressureEqns()
 {
 	MatZeroEntries(coeff_mat);
@@ -251,6 +278,7 @@ void Simulation::setupPressureEqns()
 				Index idx(i, j, k);
 				int arridx = idx.arrayId(global);
 				RAWType voxel_type = img_data[idx];
+				// Set values the linear system (Ax = b) as 1*P=0 for air, rock and sulphide voxels
 				if (voxel_type == Air)
 				{
 					MatSetValue(coeff_mat, arridx, arridx, 1.0, INSERT_VALUES);
@@ -261,9 +289,11 @@ void Simulation::setupPressureEqns()
 					MatSetValue(coeff_mat, arridx, arridx, 1.0, INSERT_VALUES);
 					VecSetValue(sources_vec, arridx, 0.0, INSERT_VALUES);
 				}
+				// For the pore, calculate the coefficients for the matrix
 				else if (voxel_type == Pore)
 				{
 					double diagonal_term = 0.0;
+					// Lambda function for setting pressure coefficients in the matrix
 					auto set_neighbor_val = [&](Index neighbor_idx)
 					{
 						if (neighbor_idx.valid(global))
@@ -274,6 +304,7 @@ void Simulation::setupPressureEqns()
 							diagonal_term -= coeff;
 						}
 					};
+					// Evaluate pressure on each voxel face
 					set_neighbor_val(Index(i + 1, j, k));
 					set_neighbor_val(Index(i - 1, j, k));
 					set_neighbor_val(Index(i, j + 1, k));
@@ -307,9 +338,13 @@ void Simulation::solvePressure()
 }
 
 /**
- * @brief Calculates the fluid flux vector from the pressure gradient.
- * * Uses the calculated pressure field and applies a finite difference
- * scheme to compute the flux according to Darcy's Law.
+ * @brief Calculates the fluid flux vector based on the pressure gradient.
+ *
+ * This function is a direct numerical implementation of Darcy's Law:
+ * $$ \mathbf{q} = -\frac{K}{\mu} \nabla P $$
+ * Using a finite difference scheme to approximate the pressure gradient
+ * Central differences are used for interior voxels and forward/backward
+ * differences are used at the boundaries of the local MPI domain.
  */
 void Simulation::calculateFlux()
 {
@@ -338,18 +373,23 @@ void Simulation::calculateFlux()
 					gradP_z = (pressure[idx] - pressure[Index(i, j, k - 1)]) / dx;
 				else
 					gradP_z = (pressure[Index(i, j, k + 1)] - pressure[Index(i, j, k - 1)]) / (2.0 * dx);
-				double conductivity = permeability[idx] / viscosity[idx];
-				flux_x[idx] = -conductivity * gradP_x;
-				flux_y[idx] = -conductivity * gradP_y;
-				flux_z[idx] = -conductivity * gradP_z;
+				double transmissivity = permeability[idx] / viscosity[idx];
+				flux_x[idx] = -transmissivity * gradP_x;
+				flux_y[idx] = -transmissivity * gradP_y;
+				flux_z[idx] = -transmissivity * gradP_z;
 			}
 }
 
 /**
- * @brief Builds the PETSc linear system for the concentration field.
- * * Discretises the time-dependent advection-diffusion-reaction equation using an
- * implicit scheme in time and an upwind scheme for the advection term.
- * * @param dt The current time step size.
+ * @brief Builds the PETSc linear system for the time-dependent advection-diffusion-reaction equation.
+ *
+ * This function discretizes the governing equation for chemical transport:
+ * $$ \frac{\partial c}{\partial t} + \nabla \cdot (\mathbf{q}c) = \nabla \cdot (D_{eff} \nabla c) + R $$
+ * It uses an implicit Euler method for the time derivative and a first-order
+ * upwind differencing scheme for the advection term (\nabla \cdot (\mathbf{q}c).
+ * The fluid flux vector, $$ \mathbf{q} $$, is provided by the preceding pressure solve.
+ *
+ * @param dt The current time step size (s), used for the time-derivative term.
  */
 void Simulation::setupConcentrationEqns(double dt)
 {
@@ -368,6 +408,7 @@ void Simulation::setupConcentrationEqns(double dt)
 				Index idx(i, j, k);
 				int arridx = idx.arrayId(global);
 				RAWType voxel_type = img_data[idx];
+				// Set values the linear system (Ax = b) for air, sulphide and rock voxels
 				if (voxel_type == Air)
 				{
 					MatSetValue(coeff_mat, arridx, arridx, 1.0, INSERT_VALUES);
@@ -376,6 +417,7 @@ void Simulation::setupConcentrationEqns(double dt)
 				}
 				else if (voxel_type >= Sulphide)
 				{
+					// Set the Sulphide source value (1.0)
 					MatSetValue(coeff_mat, arridx, arridx, 1.0, INSERT_VALUES);
 					VecSetValue(sources_vec, arridx, 1.0, INSERT_VALUES);
 					continue;
@@ -388,6 +430,7 @@ void Simulation::setupConcentrationEqns(double dt)
 				}
 				MatSetValue(coeff_mat, arridx, arridx, inv_dt, ADD_VALUES);
 				VecSetValue(sources_vec, arridx, conc[idx] * inv_dt, ADD_VALUES);
+				// Lambda function for setting advection and diffussion rates
 				auto set_link = [&](Index neighbor_idx, double q_face)
 				{
 					double D_eff = (img_data[neighbor_idx] == Pore) ? this->D * this->Dpore_fac : this->D;
@@ -395,6 +438,7 @@ void Simulation::setupConcentrationEqns(double dt)
 					MatSetValue(coeff_mat, arridx, neighbor_idx.arrayId(global), diffusion_coeff, ADD_VALUES);
 					MatSetValue(coeff_mat, arridx, arridx, -diffusion_coeff, ADD_VALUES);
 					double adv_coeff = q_face / dx;
+					// upwind advection
 					if (adv_coeff > 0)
 					{
 						MatSetValue(coeff_mat, arridx, arridx, adv_coeff, ADD_VALUES);
@@ -404,6 +448,7 @@ void Simulation::setupConcentrationEqns(double dt)
 						MatSetValue(coeff_mat, arridx, neighbor_idx.arrayId(global), -adv_coeff, ADD_VALUES);
 					}
 				};
+				// Evaluate advection-diffusion on each voxel face
 				Index neighbor_idx(0, 0, 0);
 				neighbor_idx = Index(i + 1, j, k);
 				if (neighbor_idx.valid(global))

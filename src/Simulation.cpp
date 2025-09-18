@@ -454,9 +454,10 @@ void Simulation::solveConc()
  * @param tstep The current time step number.
  * @param data_flags A bitmask specifying the data fields to include in the output.
  */
+
 void Simulation::writeVTKFile(std::string fname_root, size_t tstep, size_t data_flags)
 {
-	// 1. Write the master .pvti file with the OVERLAPPING extent logic
+	// Write the master .pvti file with the OVERLAPPING extent logic
 	if (mpi_rank == 0)
 	{
 		stringstream fname;
@@ -468,6 +469,7 @@ void Simulation::writeVTKFile(std::string fname_root, size_t tstep, size_t data_
 		fout << "\t<PImageData WholeExtent=\"0 " << global.extent.i - 1 << " 0 " << global.extent.j - 1 << " 0 " << global.extent.k - 1 << "\" ";
 		fout << "GhostLevel=\"0\" Origin=\"0 0 0\" Spacing=\"1 1 1\">" << endl;
 		fout << "\t\t<PPointData>" << endl;
+
 #if DATA_TYPE == 16
 		if (data_flags & VTKOutput::Type)
 			fout << "\t\t\t<PDataArray type=\"UInt16\" Name=\"MaterialType\"/>" << endl;
@@ -513,7 +515,7 @@ void Simulation::writeVTKFile(std::string fname_root, size_t tstep, size_t data_
 		cout << "Wrote master VTK file: " << fname.str() << endl;
 	}
 
-	// 2. Each process writes its own .vti piece file, including data for the overlap
+	// Each process writes its own .vti piece file, including data for the overlap
 	stringstream fname;
 	fname << fname_root << "_" << mpi_rank << "_" << setw(6) << setfill('0') << tstep << ".vti";
 
@@ -528,12 +530,30 @@ void Simulation::writeVTKFile(std::string fname_root, size_t tstep, size_t data_
 
 	// This method (maybe less efficient) ensures consistency.
 	// We create all arrays, then populate them in a single loop.
+
+	// if (data_flags & VTKOutput::Type)
+	//{
+	//	auto arr = vtkSmartPointer<vtkDoubleArray>::New();
+	//	arr->SetName("MaterialType");
+	//	arr->SetNumberOfValues(num_voxels_to_write);
+	//	imageData->GetPointData()->AddArray(arr);
+	// }
+
 	if (data_flags & VTKOutput::Type)
 	{
-		auto arr = vtkSmartPointer<vtkDoubleArray>::New();
+		// This block now correctly compiles the right version based on the Makefile flag (-DDATA_TYPE)
+		// and writes the correct VTK output
+#if DATA_TYPE == 16
+		auto arr = vtkSmartPointer<vtkUnsignedShortArray>::New();
 		arr->SetName("MaterialType");
 		arr->SetNumberOfValues(num_voxels_to_write);
 		imageData->GetPointData()->AddArray(arr);
+#elif DATA_TYPE == 8
+		auto arr = vtkSmartPointer<vtkUnsignedCharArray>::New();
+		arr->SetName("MaterialType");
+		arr->SetNumberOfValues(num_voxels_to_write);
+		imageData->GetPointData()->AddArray(arr);
+#endif
 	}
 	if (data_flags & VTKOutput::Conc)
 	{

@@ -44,10 +44,10 @@ SOURCE = $(OBJS:%.o=$(SRC_DIR)/%.cpp)
 #	$(CXX) $(CXXFLAGS) -c $< -o $@
 
 $(REL_DIR)/%.o_U16: $(SRC_DIR)/%.cpp
-	$(CXX) $(CXXFLAGS) -c $< -o $@ -DMPI_RAW_TYPE=MPI_UNSIGNED_SHORT -DX_ZY=1
+	$(CXX) $(CXXFLAGS) -c $< -o $@ -DMPI_RAW_TYPE=MPI_UNSIGNED_SHORT -DDATA_TYPE=16 -DX_ZY=1
 
 $(REL_DIR)/%.o_U8: $(SRC_DIR)/%.cpp
-	$(CXX) $(CXXFLAGS) -c $< -o $@ -DMPI_RAW_TYPE=MPI_UNSIGNED_CHAR
+	$(CXX) $(CXXFLAGS) -c $< -o $@ -DMPI_RAW_TYPE=MPI_UNSIGNED_CHAR -DDATA_TYPE=8
 
 uint16: $(U16_OBJS)
 	$(CXX) $(LFLAGS) $(U16_OBJS) -o $(REL_DIR)/$(TARGET)_uint16 $(LIBS) 

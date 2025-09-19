@@ -83,6 +83,7 @@ void Simulation::setupDomain(int3 gextent)
 	decomposeDomain<IDX_SCHEME>();
 	MPIDomain<double, 0, IDX_SCHEME>::SetGlobal(int3(), gextent);
 	MPISubIndex<IDX_SCHEME>::Init(local, mpi_rank, mpi_comm_size);
+
 	img_data.setup(local.origin, local.extent);
 	conc.setup(local.origin, local.extent);
 	frac.setup(local.origin, local.extent);
@@ -93,6 +94,8 @@ void Simulation::setupDomain(int3 gextent)
 	flux_y.setup(local.origin, local.extent);
 	flux_z.setup(local.origin, local.extent);
 	saturation.setup(local.origin, local.extent);
+	rel_permeability.setup(local.origin, local.extent);
+	cap_pressure.setup(local.origin, local.extent);
 }
 
 /**
@@ -123,7 +126,7 @@ void Simulation::setupReactionRates()
  * @brief Creates and configures all necessary PETSc objects.
  * * Initialises the parallel matrix, vectors, and the KSP solver.
  */
-void Simulation::setupPETSc()
+void Simulation::setupPETSc(bool zero_conc)
 {
 	VecCreate(PETSC_COMM_WORLD, &sources_vec);
 	VecSetSizes(sources_vec, local.extent.size(), PETSC_DECIDE);
@@ -160,6 +163,7 @@ void Simulation::initProperties()
 		for (int j = local.origin.j; j < (local.origin.j + local.extent.j); ++j)
 			for (int i = local.origin.i; i < (local.origin.i + local.extent.i); ++i)
 			{
+				/*
 				Index idx(i, j, k);
 				RAWType voxel_type = img_data[idx];
 				switch (voxel_type)
@@ -182,6 +186,30 @@ void Simulation::initProperties()
 					viscosity[idx] = 0.0;
 					break;
 				}
+					*/
+
+				Index idx(i, j, k);
+				RAWType voxel_type = img_data[idx];
+
+				double intrinsic_K;
+				switch (voxel_type)
+				{
+				case Pore:
+					intrinsic_K = pore_permeability;
+					break;
+				case Rock:
+				case Sulphide:
+					intrinsic_K = rock_permeability;
+					break;
+				case Air:
+				default:
+					intrinsic_K = 0.0;
+					break;
+				}
+
+				// The 'permeability' field now stores the effective permeability
+				permeability[idx] = intrinsic_K * rel_permeability[idx];
+				viscosity[idx] = fluid_viscosity;
 			}
 }
 
@@ -293,26 +321,47 @@ void Simulation::setupPressureEqns()
 				else if (voxel_type == Pore)
 				{
 					double diagonal_term = 0.0;
-					// Lambda function for setting pressure coefficients in the matrix
-					auto set_neighbor_val = [&](Index neighbor_idx)
+					double source_term = 0.0; // Source term for this voxel
+
+					// Lambda function for setting pressure coefficients in the matrix considering connections to neighbours
+					auto set_neighbor_link = [&](Index neighbor_idx, int dimension)
 					{
 						if (neighbor_idx.valid(global))
 						{
-							double K_avg = (permeability[idx] + permeability[neighbor_idx]) / 2.0;
-							double coeff = K_avg / viscosity[idx];
-							MatSetValue(coeff_mat, arridx, neighbor_idx.arrayId(global), coeff, INSERT_VALUES);
-							diagonal_term -= coeff;
+							RAWType neighbor_type = img_data[neighbor_idx];
+							if (neighbor_type == Air)
+							{
+								// Evaporation (Neumann) Boundary Condition
+								// This is a surface voxel. Add the evaporative flux to the source term.
+								// Flux is outward, so it's a sink (negative source).
+								source_term -= evaporative_flux * dx; // flux * area (dx*dx) / (dx)
+
+								// Also need a diagonal contribution for the open face
+								double K_self = permeability[idx];
+								double coeff = K_self / viscosity[idx]; // Note: uses K of the pore, not an average
+								diagonal_term -= coeff;
+							}
+							else
+							{
+								// This is an internal face (Pore-Pore or Pore-Rock).
+								// Standard connection based on average permeability.
+								double K_avg = (permeability[idx] + permeability[neighbor_idx]) / 2.0;
+								double coeff = K_avg / viscosity[idx];
+								MatSetValue(coeff_mat, arridx, neighbor_idx.arrayId(global), coeff, INSERT_VALUES);
+								diagonal_term -= coeff;
+							}
 						}
 					};
-					// Evaluate pressure on each voxel face
-					set_neighbor_val(Index(i + 1, j, k));
-					set_neighbor_val(Index(i - 1, j, k));
-					set_neighbor_val(Index(i, j + 1, k));
-					set_neighbor_val(Index(i, j - 1, k));
-					set_neighbor_val(Index(i, j, k + 1));
-					set_neighbor_val(Index(i, j, k - 1));
+
+					set_neighbor_link(Index(i + 1, j, k), 0);
+					set_neighbor_link(Index(i - 1, j, k), 0);
+					set_neighbor_link(Index(i, j + 1, k), 1);
+					set_neighbor_link(Index(i, j - 1, k), 1);
+					set_neighbor_link(Index(i, j, k + 1), 2);
+					set_neighbor_link(Index(i, j, k - 1), 2);
+
 					MatSetValue(coeff_mat, arridx, arridx, diagonal_term, INSERT_VALUES);
-					VecSetValue(sources_vec, arridx, 0.0, INSERT_VALUES);
+					VecSetValue(sources_vec, arridx, source_term, INSERT_VALUES);
 				}
 			}
 	MatAssemblyBegin(coeff_mat, MAT_FINAL_ASSEMBLY);
@@ -530,6 +579,15 @@ void Simulation::writeVTKFile(std::string fname_root, size_t tstep, size_t data_
 			fout << "\t\t\t<PDataArray type=\"Float32\" Name=\"SulphideFrac\"/>" << endl;
 		if (data_flags & VTKOutput::Flux_Vec)
 			fout << "\t\t\t<PDataArray type=\"Float64\" Name=\"Flux\" NumberOfComponents=\"3\"/>" << endl;
+		if (data_flags & VTKOutput::Saturation)
+			fout << "\t\t\t<PDataArray type=\"Float64\" Name=\"Saturation\"/>" << endl;
+		if (data_flags & VTKOutput::CapPressure)
+			fout << "\t\t\t<PDataArray type=\"Float64\" Name=\"CapillaryPressure\"/>" << endl;
+		if (data_flags & VTKOutput::RelPermeability)
+			fout << "\t\t\t<PDataArray type=\"Float64\" Name=\"RelativePermeability\"/>" << endl;
+		if (data_flags & VTKOutput::Permeability)
+			fout << "\t\t\t<PDataArray type=\"Float64\" Name=\"EffectivePermeability\"/>" << endl;
+
 		fout << "\t\t</PPointData>" << endl;
 
 		for (int proc = 0; proc < mpi_comm_size; ++proc)
@@ -630,6 +688,39 @@ void Simulation::writeVTKFile(std::string fname_root, size_t tstep, size_t data_
 		imageData->GetPointData()->SetVectors(arr);
 	}
 
+	if (data_flags & VTKOutput::Saturation)
+	{
+		auto arr = vtkSmartPointer<vtkDoubleArray>::New();
+		arr->SetName("Saturation");
+		arr->SetNumberOfValues(num_voxels_to_write);
+		// arr->SetArray(saturation.getData().get() + saturation.pad_size, local.extent.size(), 1);
+		imageData->GetPointData()->AddArray(arr);
+	}
+	if (data_flags & VTKOutput::CapPressure)
+	{
+		auto arr = vtkSmartPointer<vtkDoubleArray>::New();
+		arr->SetName("CapillaryPressure");
+		arr->SetNumberOfValues(num_voxels_to_write);
+		// arr->SetArray(cap_pressure.getData().get() + cap_pressure.pad_size, local.extent.size(), 1);
+		imageData->GetPointData()->AddArray(arr);
+	}
+	if (data_flags & VTKOutput::RelPermeability)
+	{
+		auto arr = vtkSmartPointer<vtkDoubleArray>::New();
+		arr->SetName("RelativePermeability");
+		arr->SetNumberOfValues(num_voxels_to_write);
+		// arr->SetArray(rel_permeability.getData().get() + rel_permeability.pad_size, local.extent.size(), 1);
+		imageData->GetPointData()->AddArray(arr);
+	}
+	if (data_flags & VTKOutput::Permeability)
+	{
+		auto arr = vtkSmartPointer<vtkDoubleArray>::New();
+		arr->SetName("EffectivePermeability");
+		arr->SetNumberOfValues(num_voxels_to_write);
+		// arr->SetArray(permeability.getData().get() + permeability.pad_size, local.extent.size(), 1);
+		imageData->GetPointData()->AddArray(arr);
+	}
+
 	size_t count = 0;
 	for (int k = local.origin.k; k < (local.origin.k + local.extent.k); ++k)
 	{
@@ -658,4 +749,220 @@ void Simulation::writeVTKFile(std::string fname_root, size_t tstep, size_t data_
 	// writer->SetInputData(imageData); // SetInputData is simpler here but requires a different version of VTK
 	writer->SetInputConnection(imageData->GetProducerPort());
 	writer->Write();
+}
+
+/**
+ * @brief Initializes the fluid saturation field.
+ * * Sets the saturation to 1.0 (fully saturated) in pore and sulphide voxels
+ * and 0.0 (dry) in rock and air voxels.
+ */
+void Simulation::initSaturation()
+{
+	for (int k = local.origin.k; k < (local.origin.k + local.extent.k); ++k)
+		for (int j = local.origin.j; j < (local.origin.j + local.extent.j); ++j)
+			for (int i = local.origin.i; i < (local.origin.i + local.extent.i); ++i)
+			{
+				Index idx(i, j, k);
+				RAWType voxel_type = img_data[idx];
+				if (voxel_type == Pore || voxel_type >= Sulphide)
+				{
+					saturation[idx] = 1.0;
+				}
+				else
+				{
+					saturation[idx] = 0.0;
+				}
+			}
+}
+
+/**
+ * @brief Updates the capillary pressure field based on the current saturation.
+ * * Implements the van Genuchten capillary pressure model.
+ */
+void Simulation::updateCapillaryPressure()
+{
+	const double m = 1.0 - (1.0 / vg_n);
+
+	for (int k = local.origin.k; k < (local.origin.k + local.extent.k); ++k)
+		for (int j = local.origin.j; j < (local.origin.j + local.extent.j); ++j)
+			for (int i = local.origin.i; i < (local.origin.i + local.extent.i); ++i)
+			{
+				Index idx(i, j, k);
+				if (img_data[idx] == Pore || img_data[idx] >= Sulphide)
+				{
+					// Calculate effective saturation, Se, ensuring it's within a valid range
+					double Se = (saturation[idx] - s_res) / (1.0 - s_res);
+					Se = std::max(0.0, std::min(1.0, Se));
+
+					if (Se >= 1.0)
+					{
+						cap_pressure[idx] = 0.0;
+					}
+					else
+					{
+						double Se_inv_m = pow(Se, -1.0 / m);
+						cap_pressure[idx] = (1.0 / vg_alpha) * pow(Se_inv_m - 1.0, 1.0 / vg_n);
+					}
+				}
+				else
+				{
+					cap_pressure[idx] = 0.0;
+				}
+			}
+}
+
+/**
+ * @brief Updates the relative permeability field based on the current saturation.
+ * * Implements the Mualem-van Genuchten relative permeability model.
+ */
+void Simulation::updateRelativePermeability()
+{
+	const double m = 1.0 - (1.0 / vg_n);
+
+	for (int k = local.origin.k; k < (local.origin.k + local.extent.k); ++k)
+		for (int j = local.origin.j; j < (local.origin.j + local.extent.j); ++j)
+			for (int i = local.origin.i; i < (local.origin.i + local.extent.i); ++i)
+			{
+				Index idx(i, j, k);
+				if (img_data[idx] == Pore || img_data[idx] >= Sulphide)
+				{
+					// Calculate effective saturation, Se
+					double Se = (saturation[idx] - s_res) / (1.0 - s_res);
+					Se = std::max(0.0, std::min(1.0, Se));
+
+					if (Se <= 0.0)
+					{
+						rel_permeability[idx] = 0.0;
+					}
+					else
+					{
+						double term1 = 1.0 - pow(1.0 - pow(Se, 1.0 / m), m);
+						rel_permeability[idx] = sqrt(Se) * term1 * term1;
+					}
+				}
+				else
+				{
+					rel_permeability[idx] = 0.0;
+				}
+			}
+}
+
+/**
+ * @brief Evolves the fluid saturation field over a single time step.
+ * * Implements an explicit Euler time-step for the mass conservation equation:
+ * $$ \phi * \frac{\partial s}{\partial t} + \nabla \cdot \mathbf{q} = 0. $$
+ * * @param dt The current time step size.
+ */
+void Simulation::updateSaturation(double dt)
+{
+	// A temporary field to store the new saturation values before updating the main one.
+	MPIDomain<double, 1, IDX_SCHEME> saturation_new;
+	saturation_new.setup(local.origin, local.extent);
+
+	const double porosity = 0.1; // This should be a configurable parameter
+	const double dt_over_phi = dt / porosity;
+
+	// Loop through the interior of the local domain
+	for (int k = local.origin.k; k < (local.origin.k + local.extent.k); ++k)
+	{
+		for (int j = local.origin.j; j < (local.origin.j + local.extent.j); ++j)
+		{
+			for (int i = local.origin.i; i < (local.origin.i + local.extent.i); ++i)
+			{
+				Index idx(i, j, k);
+
+				//// Approximate flux at the faces between voxels by averaging cell-centered values
+				// double q_face_xp = (flux_x[idx] + flux_x[Index(i + 1, j, k)]) / 2.0;
+				// double q_face_xm = (flux_x[idx] + flux_x[Index(i - 1, j, k)]) / 2.0;
+				// double q_face_yp = (flux_y[idx] + flux_y[Index(i, j + 1, k)]) / 2.0;
+				// double q_face_ym = (flux_y[idx] + flux_y[Index(i, j - 1, k)]) / 2.0;
+				// double q_face_zp = (flux_z[idx] + flux_z[Index(i, j, k + 1)]) / 2.0;
+				// double q_face_zm = (flux_z[idx] + flux_z[Index(i, j, k - 1)]) / 2.0;
+
+				// Add boundary checks for all neighbor accesses ---
+				// +X face
+				Index neighbor_xp(i + 1, j, k);
+				double q_face_xp = neighbor_xp.valid(global) ? (flux_x[idx] + flux_x[neighbor_xp]) / 2.0 : 0.0;
+				// -X face
+				Index neighbor_xm(i - 1, j, k);
+				double q_face_xm = neighbor_xm.valid(global) ? (flux_x[idx] + flux_x[neighbor_xm]) / 2.0 : 0.0;
+
+				// +Y face
+				Index neighbor_yp(i, j + 1, k);
+				double q_face_yp = neighbor_yp.valid(global) ? (flux_y[idx] + flux_y[neighbor_yp]) / 2.0 : 0.0;
+				// -Y face
+				Index neighbor_ym(i, j - 1, k);
+				double q_face_ym = neighbor_ym.valid(global) ? (flux_y[idx] + flux_y[neighbor_ym]) / 2.0 : 0.0;
+
+				// +Z face
+				Index neighbor_zp(i, j, k + 1);
+				double q_face_zp = neighbor_zp.valid(global) ? (flux_z[idx] + flux_z[neighbor_zp]) / 2.0 : 0.0;
+				// -Z face
+				Index neighbor_zm(i, j, k - 1);
+				double q_face_zm = neighbor_zm.valid(global) ? (flux_z[idx] + flux_z[neighbor_zm]) / 2.0 : 0.0;
+
+				// Calculate the divergence of the flux vector using a central difference
+				double div_q = ((q_face_xp - q_face_xm) + (q_face_yp - q_face_ym) + (q_face_zp - q_face_zm)) / dx;
+
+				// Update saturation using the explicit time-step formula: S_new = S_old - (dt/phi) * div(q)
+				double new_sat = saturation[idx] - dt_over_phi * div_q;
+
+				// Clamp the result to the physical bounds [0, 1]
+				saturation_new[idx] = std::max(0.0, std::min(1.0, new_sat));
+			}
+		}
+	}
+
+	// Atomically swap the new data into the main saturation field
+	saturation.take(saturation_new.getData());
+}
+
+/**
+ * @brief Models precipitation at the surface due to evaporation.
+ *
+ * This function identifies pore voxels adjacent to air that contain fluid (S > 0).
+ * At these surface locations, it simulates precipitation by setting the chemical
+ * concentration to its maximum value and changing the material type from Pore to Rock,
+ * effectively clogging the pore.
+ */
+void Simulation::handleSurfaceEffects()
+{
+	for (int k = local.origin.k; k < (local.origin.k + local.extent.k); ++k)
+	{
+		for (int j = local.origin.j; j < (local.origin.j + local.extent.j); ++j)
+		{
+			for (int i = local.origin.i; i < (local.origin.i + local.extent.i); ++i)
+			{
+				Index idx(i, j, k);
+
+				// Proceed only if the voxel is a pore containing some fluid
+				if (img_data[idx] == Pore && saturation[idx] > 0.0)
+				{
+					bool is_surface_voxel = false;
+
+					// Check all 6 neighbors to see if any are Air
+					Index neighbors[6] = {
+						Index(i + 1, j, k), Index(i - 1, j, k),
+						Index(i, j + 1, k), Index(i, j - 1, k),
+						Index(i, j, k + 1), Index(i, j, k - 1)};
+
+					for (int n = 0; n < 6; ++n)
+					{
+						if (neighbors[n].valid(global) && img_data[neighbors[n]] == Air)
+						{
+							is_surface_voxel = true;
+							break; // Found an air neighbor, no need to check further
+						}
+					}
+
+					// If it's a surface voxel, apply the precipitation effect
+					if (is_surface_voxel)
+					{
+						conc[idx] = 1.0;			   // Set concentration to maximum (saturated)
+						img_data[idx] = (RAWType)Rock; // Clog the pore with precipitate
+					}
+				}
+			}
+		}
+	}
 }

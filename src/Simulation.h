@@ -16,9 +16,11 @@ enum VTKOutput
 	Frac = 0x004,
 	Type = 0x008,
 	Pressure = 0x010,
-	Permeability = 0x020,
+	Permeability = 0x020, // This corresponds to effective permeability
 	Saturation = 0x040,
-	Flux_Vec = 0x080 // New flag for the flux vector
+	Flux_Vec = 0x080, // New flag for the flux vector
+	CapPressure = 0x100,
+	RelPermeability = 0x200
 };
 
 class Simulation
@@ -27,34 +29,41 @@ public:
 	Simulation(size_t seed);
 	virtual ~Simulation();
 
-	// --- Core Simulation Setup & I/O ---
+	// Core Simulation Setup & I/O
 	void readRAW(std::string, size_t);
 	void setupDomain(int3 global_extent);
-	void setupPETSc();
+	void setupPETSc(bool zero_conc);
 	void writeVTKFile(std::string fname_root, size_t tstep, size_t data_flags);
 
-	// --- Physics Initialization & Time-Stepping ---
+	// Physics Initialisation & Time-Stepping
 	void initProperties();
 	void initFrac();
+	void initSaturation();
 	void setupReactionRates();
 	int updateFrac(double dt);
 	void doExchange();
 
-	// --- Solvers for Dynamic Model ---
+	void updateSaturation(double dt);
+	void updateCapillaryPressure();
+	void updateRelativePermeability();
+	void handleSurfaceEffects();
+	void handlePrecipitation();
+
+	// Solvers for Dynamic Model
 	void setupPressureEqns();
 	void solvePressure();
 	void setupConcentrationEqns(double dt);
 	void solveConc();
 	void calculateFlux();
 
-	// --- Template & Helper Functions ---
+	// Template & Helper Functions
 	template <IndexScheme S>
 	void decomposeDomain();
 
 	template <typename T, int P, IndexScheme S>
 	void writeData(const MPIDomain<T, P, S> &data_dom, std::string fname, MPI_Datatype data_type);
 
-	// --- Public Parameters ---
+	// Public Parameters
 	double D;
 	double dx;
 	double Dpore_fac;
@@ -63,21 +72,29 @@ public:
 	bool use_gamma;
 	double gamma_alpha;
 	double gamma_beta;
+	double c_sat;			 // Saturation concentration limit
+	double evaporative_flux; // Rate of evaporation at the air interface (m/s)
+	// van Genuchten model parameters
+	double vg_alpha; // van Genuchten alpha parameter (1/m)
+	double vg_n;	 // van Genuchten n parameter ()
+	double s_res;	 // Residual saturation ()
 
-	// --- Public Data Fields ---
+	// Public Data Fields
 	// Input & Material Properties
 	MPIDomain<RAWType, 1, IDX_SCHEME> img_data;
 	MPIDomain<float, 1, IDX_SCHEME> frac;
 	MPIDomain<double, 1, IDX_SCHEME> permeability;
 	MPIDomain<double, 1, IDX_SCHEME> viscosity;
-
 	// Solution Fields
 	MPIDomain<double, 1, IDX_SCHEME> pressure;
 	MPIDomain<double, 1, IDX_SCHEME> conc;
-	MPIDomain<double, 1, IDX_SCHEME> saturation;
 	MPIDomain<double, 1, IDX_SCHEME> flux_x;
 	MPIDomain<double, 1, IDX_SCHEME> flux_y;
 	MPIDomain<double, 1, IDX_SCHEME> flux_z;
+	// Add/update data fields
+	MPIDomain<double, 1, IDX_SCHEME> saturation;
+	MPIDomain<double, 1, IDX_SCHEME> cap_pressure;
+	MPIDomain<double, 1, IDX_SCHEME> rel_permeability;
 
 	friend std::ostream &operator<<(std::ostream &, const Simulation &);
 

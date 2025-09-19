@@ -737,6 +737,14 @@ void Simulation::writeVTKFile(std::string fname_root, size_t tstep, size_t data_
 					imageData->GetPointData()->GetArray("Pressure")->SetTuple1(count, pressure[idx]);
 				if (data_flags & VTKOutput::Frac)
 					imageData->GetPointData()->GetArray("SulphideFrac")->SetTuple1(count, frac[idx]);
+				if (data_flags & VTKOutput::Saturation)
+					imageData->GetPointData()->GetArray("Saturation")->SetTuple1(count, saturation[idx]);
+				if (data_flags & VTKOutput::CapPressure)
+					imageData->GetPointData()->GetArray("CapillaryPressure")->SetTuple1(count, cap_pressure[idx]);
+				if (data_flags & VTKOutput::RelPermeability)
+					imageData->GetPointData()->GetArray("RelativePermeability")->SetTuple1(count, rel_permeability[idx]);
+				if (data_flags & VTKOutput::Permeability)
+					imageData->GetPointData()->GetArray("EffectivePermeability")->SetTuple1(count, permeability[idx]);
 				if (data_flags & VTKOutput::Flux_Vec)
 					imageData->GetPointData()->GetVectors("Flux")->SetTuple3(count, flux_x[idx], flux_y[idx], flux_z[idx]);
 				count++;

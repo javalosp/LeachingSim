@@ -229,12 +229,87 @@ void Simulation::initFrac()
 }
 
 /**
+ * @brief Updates the fraction of reactive material based on flux from the grain surface.
+ *
+ * This function models the leaching process. It calculates the total flux of the
+ * dissolved species leaving each sulphide voxel and uses this flux to decrease the
+ * remaining fraction 'frac'. When a voxel's fraction reaches zero, its material
+ * type is changed from Sulphide to Pore.
+ *
+ * @param dt The current time step size.
+ * @return The number of voxels that were fully leached in this step.
+ */
+int Simulation::updateFrac(double dt)
+{
+	int leached_locally = 0;
+
+	for (int k = local.origin.k; k < (local.origin.k + local.extent.k); ++k)
+	{
+		for (int j = local.origin.j; j < (local.origin.j + local.extent.j); ++j)
+		{
+			for (int i = local.origin.i; i < (local.origin.i + local.extent.i); ++i)
+			{
+				Index idx(i, j, k);
+
+				if (img_data[idx] >= Sulphide)
+				{
+					double total_flux_out = 0.0;
+
+					// Lambda to calculate flux to one neighbor
+					auto get_flux_to_neighbor = [&](Index neighbor_idx)
+					{
+						if (neighbor_idx.valid(global))
+						{
+							RAWType neighbor_type = img_data[neighbor_idx];
+							if (neighbor_type == Pore || neighbor_type == Rock)
+							{
+								// Diffusive flux is proportional to concentration gradient
+								double diffusive_flux = D * (conc[idx] - conc[neighbor_idx]) / dx;
+
+								// Advective flux is q * c (using upwinding)
+								// We need the flux at the face, which we approximate by averaging
+								double q_face_x = (flux_x[idx] + flux_x[neighbor_idx]) / 2.0;
+								double advective_flux = std::max(0.0, q_face_x) * conc[idx] + std::min(0.0, q_face_x) * conc[neighbor_idx];
+
+								return diffusive_flux + advective_flux;
+							}
+						}
+						return 0.0;
+					};
+
+					// Sum the flux out of all 6 faces of the voxel
+					total_flux_out += get_flux_to_neighbor(Index(i + 1, j, k));
+					total_flux_out += get_flux_to_neighbor(Index(i - 1, j, k));
+					total_flux_out += get_flux_to_neighbor(Index(i, j + 1, k));
+					total_flux_out += get_flux_to_neighbor(Index(i, j - 1, k));
+					total_flux_out += get_flux_to_neighbor(Index(i, j, k + 1));
+					total_flux_out += get_flux_to_neighbor(Index(i, j, k - 1));
+
+					// Update frac based on the total flux leaving the grain voxel
+					// (Flux has units of mol/m^2/s, multiply by area and dt, divide by molar volume)
+					// We use 'kreac' as a scaling factor for this complex term.
+					frac[idx] -= (kreac * total_flux_out * dx * dx) * dt;
+
+					if (frac[idx] < 0.0)
+					{
+						frac[idx] = 0.0;
+						img_data[idx] = (RAWType)Pore;
+						leached_locally++;
+					}
+				}
+			}
+		}
+	}
+	return leached_locally;
+}
+
+/**
  * @brief Updates the fraction of reactive material based on the local concentration.
  * * Simulates the leaching process over a single time step. When a voxel's fraction
  * reaches zero, its material type is changed to Pore.
  * @param dt The current time step size.
  * @return The number of voxels that were fully leached in this step.
- */
+
 int Simulation::updateFrac(double dt)
 {
 	int leached_locally = 0;
@@ -256,6 +331,7 @@ int Simulation::updateFrac(double dt)
 			}
 	return leached_locally;
 }
+	 */
 
 /**
  * @brief Manages the exchange of halo/padding data between MPI processes.

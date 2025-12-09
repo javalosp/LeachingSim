@@ -74,6 +74,39 @@ int main(int argc, char *argv[])
 		the_simulation.initSaturation();
 		the_simulation.setupReactionRates();
 
+		// Time Step Stability Check (Diffusive)
+		double dx = the_simulation.dx;
+		double D_coeff = the_simulation.D;
+		double dt_user = cmd["dt"].as<double>();
+
+		// Calculate the maximum stable time step based on diffusion
+		// dt_stable = dx^2 / (2 * D)
+		// (Add a small value to avoid division by zero if D is zero,
+		// considering that values of the can be of the order 1e-15).
+		double dt_stable_max = (dx * dx) / (2.0 * D_coeff + 1e-30);
+
+		// Choose the actual dt to use
+		double dt_actual;
+		double stability_factor = 0.9; // Use 90% of the max stable step for safety
+		if (dt_user > dt_stable_max)
+		{
+			dt_actual = stability_factor * dt_stable_max;
+			if (mpi_rank == 0)
+			{
+				cout << "[Warning] User requested dt (" << dt_user
+					 << "s) exceeds stability limit (" << dt_stable_max
+					 << "s). Using adjusted dt = " << dt_actual << "s." << endl;
+			}
+		}
+		else
+		{
+			dt_actual = dt_user;
+			if (mpi_rank == 0)
+			{
+				cout << "Using user-specified dt = " << dt_actual << "s (stable)." << endl;
+			}
+		}
+
 		// Main Simulation Loop
 		double t = 0.0;
 		size_t n = 0;
@@ -108,7 +141,8 @@ int main(int argc, char *argv[])
 			the_simulation.solveConc();
 			the_simulation.handlePrecipitation();
 
-			int leached_this_step = the_simulation.updateFrac(dt);
+			// int leached_this_step = the_simulation.updateFrac(dt);
+			int leached_this_step = the_simulation.updateFrac(dt_actual);
 			int leached_total = 0;
 			MPI_Allreduce(&leached_this_step, &leached_total, 1, MPI_INT, MPI_SUM, PETSC_COMM_WORLD);
 
@@ -119,7 +153,8 @@ int main(int argc, char *argv[])
 				the_simulation.writeVTKFile(out_dir + "/output", n, (VTKOutput)(Conc | Pressure | Frac | Type | Flux_Vec | Saturation | CapPressure | RelPermeability | Permeability));
 			}
 
-			t += dt;
+			// t += dt;
+			t += dt_actual;
 			n++;
 			if (mpi_rank == 0)
 				cout << "Done iteration. [" << leached_total << " voxels fully leached this step.]" << endl;

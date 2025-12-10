@@ -229,6 +229,102 @@ void Simulation::initFrac()
 }
 
 /**
+ * @brief Updates the fraction of reactive material using a Resistance-in-Series model.
+ */
+int Simulation::updateFrac(double dt)
+{
+	int leached_locally = 0;
+
+	// Assume Saturation Concentration (solubility limit) is 1.0 (normalized)
+	// Or pass this as a parameter if you have a specific value in mol/m3
+	// const double C_sat = 1.0;
+
+	for (int k = local.origin.k; k < (local.origin.k + local.extent.k); ++k)
+	{
+		for (int j = local.origin.j; j < (local.origin.j + local.extent.j); ++j)
+		{
+			for (int i = local.origin.i; i < (local.origin.i + local.extent.i); ++i)
+			{
+				Index idx(i, j, k);
+
+				// Only process reactive solids
+				if (img_data[idx] >= Sulphide)
+				{
+					double total_mass_loss = 0.0;
+
+					// Lambda to calculate chemical flux to one liquid neighbor
+					auto calc_surface_flux = [&](Index neighbor_idx)
+					{
+						if (neighbor_idx.valid(global))
+						{
+							RAWType neighbor_type = img_data[neighbor_idx];
+
+							// Reaction only happens at interface with Pore
+							if (neighbor_type == Pore)
+							{
+								// 1. Calculate Transport Coefficient (k_trans ~ D/dx)
+								// We can also add advection velocity if flow is strong
+								double k_trans = D / dx;
+
+								// 2. Calculate Reaction Coefficient (k_reac)
+								double k_rxn = kreac;
+
+								// 3. Calculate Effective Coefficient (Series Resistance)
+								// This is the logic from "Other Code" adapted to yours
+								double k_eff = 1.0 / ((1.0 / k_trans) + (1.0 / k_rxn));
+
+								// 4. Calculate Driving Force (c_sat - C_pore)
+								double driving_force = c_sat - conc[neighbor_idx];
+
+								// Ensure we don't leach backwards if pore is supersaturated
+								if (driving_force < 0)
+									driving_force = 0;
+
+								// 5. Return Flux (mol/m^2/s)
+								return k_eff * driving_force;
+							}
+						}
+						return 0.0;
+					};
+
+					// Sum flux for all 6 faces
+					double flux_sum = 0.0;
+					flux_sum += calc_surface_flux(Index(i + 1, j, k));
+					flux_sum += calc_surface_flux(Index(i - 1, j, k));
+					flux_sum += calc_surface_flux(Index(i, j + 1, k));
+					flux_sum += calc_surface_flux(Index(i, j - 1, k));
+					flux_sum += calc_surface_flux(Index(i, j, k + 1));
+					flux_sum += calc_surface_flux(Index(i, j, k - 1));
+
+					// Update fraction
+					// Mass Loss = Flux * Area * dt
+					// (Assuming frac is normalized mass)
+					double area_per_face = dx * dx;
+					total_mass_loss = flux_sum * area_per_face * dt;
+
+					// Apply loss.
+					// Note: You might need to divide by Molar Density if frac isn't moles.
+					frac[idx] -= total_mass_loss;
+
+					if (frac[idx] <= 0.0)
+					{
+						frac[idx] = 0.0;
+						img_data[idx] = (RAWType)Pore;
+
+						// IMPORTANT: Initialise the new pore concentration
+						// usually to c_sat because it just dissolved
+						conc[idx] = c_sat;
+
+						leached_locally++;
+					}
+				}
+			}
+		}
+	}
+	return leached_locally;
+}
+
+/**
  * @brief Updates the fraction of reactive material based on flux from the grain surface.
  *
  * This function models the leaching process. It calculates the total flux of the
@@ -239,6 +335,7 @@ void Simulation::initFrac()
  * @param dt The current time step size.
  * @return The number of voxels that were fully leached in this step.
  */
+/*
 int Simulation::updateFrac(double dt)
 {
 	int leached_locally = 0;
@@ -302,6 +399,7 @@ int Simulation::updateFrac(double dt)
 	}
 	return leached_locally;
 }
+*/
 
 /**
  * @brief Updates the fraction of reactive material based on the local concentration.

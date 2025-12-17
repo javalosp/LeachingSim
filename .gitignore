@@ -17,6 +17,7 @@ LeachingSim_uint16
 /output/*
 /vtk_output/*
 /simulation_output/*
+/output_/*
 
 # PBS logs
 *.pbs.*

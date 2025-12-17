@@ -5,6 +5,8 @@
 #include <iomanip>
 #include <sys/stat.h>
 #include <cassert>
+#include <algorithm>
+
 #include <vtkSmartPointer.h>
 #include <vtkXMLImageDataWriter.h>
 #include <vtkImageData.h>
@@ -135,7 +137,8 @@ void Simulation::setupPETSc(bool zero_conc)
 	MatCreate(PETSC_COMM_WORLD, &coeff_mat);
 	MatSetSizes(coeff_mat, local.extent.size(), local.extent.size(), PETSC_DETERMINE, PETSC_DETERMINE);
 	MatSetType(coeff_mat, MATMPIAIJ);
-	MatMPIAIJSetPreallocation(coeff_mat, 8, PETSC_NULL, 8, PETSC_NULL);
+	// MatMPIAIJSetPreallocation(coeff_mat, 8, PETSC_NULL, 8, PETSC_NULL);
+	MatMPIAIJSetPreallocation(coeff_mat, 8, PETSC_NULLPTR, 8, PETSC_NULLPTR);
 	MatSetFromOptions(coeff_mat);
 	KSPCreate(PETSC_COMM_WORLD, &ksp);
 	KSPSetType(ksp, KSPGMRES);
@@ -552,7 +555,8 @@ void Simulation::solvePressure()
 {
 	PetscInt its;
 	VecPlaceArray(conc_vec, pressure.getData().get() + pressure.pad_size);
-	KSPSetOperators(ksp, coeff_mat, coeff_mat, DIFFERENT_NONZERO_PATTERN);
+	// KSPSetOperators(ksp, coeff_mat, coeff_mat, DIFFERENT_NONZERO_PATTERN);
+	KSPSetOperators(ksp, coeff_mat, coeff_mat);
 	KSPSolve(ksp, sources_vec, conc_vec);
 	VecResetArray(conc_vec);
 	KSPGetIterationNumber(ksp, &its);
@@ -620,7 +624,8 @@ void Simulation::setupConcentrationEqns(double dt)
 	MatCreate(PETSC_COMM_WORLD, &coeff_mat);
 	MatSetSizes(coeff_mat, local.extent.size(), local.extent.size(), PETSC_DETERMINE, PETSC_DETERMINE);
 	MatSetType(coeff_mat, MATMPIAIJ);
-	MatMPIAIJSetPreallocation(coeff_mat, 8, PETSC_NULL, 8, PETSC_NULL);
+	// MatMPIAIJSetPreallocation(coeff_mat, 8, PETSC_NULL, 8, PETSC_NULL);
+	MatMPIAIJSetPreallocation(coeff_mat, 8, PETSC_NULLPTR, 8, PETSC_NULLPTR);
 	MatSetFromOptions(coeff_mat);
 	VecZeroEntries(sources_vec);
 	const double inv_dt = 1.0 / dt;
@@ -707,7 +712,8 @@ void Simulation::solveConc()
 	PetscInt its;
 	VecPlaceArray(conc_vec, conc.getData().get() + conc.pad_size);
 	KSPReset(ksp);
-	KSPSetOperators(ksp, coeff_mat, coeff_mat, DIFFERENT_NONZERO_PATTERN);
+	// KSPSetOperators(ksp, coeff_mat, coeff_mat, DIFFERENT_NONZERO_PATTERN);
+	KSPSetOperators(ksp, coeff_mat, coeff_mat);
 	KSPSolve(ksp, sources_vec, conc_vec);
 	VecResetArray(conc_vec);
 	KSPGetIterationNumber(ksp, &its);
@@ -928,8 +934,8 @@ void Simulation::writeVTKFile(std::string fname_root, size_t tstep, size_t data_
 
 	vtkSmartPointer<vtkXMLImageDataWriter> writer = vtkSmartPointer<vtkXMLImageDataWriter>::New();
 	writer->SetFileName(fname.str().c_str());
-	// writer->SetInputData(imageData); // SetInputData is simpler here but requires a different version of VTK
-	writer->SetInputConnection(imageData->GetProducerPort());
+	writer->SetInputData(imageData); // SetInputData is simpler here but requires a newer version of VTK
+	// writer->SetInputConnection(imageData->GetProducerPort());  // For older versions of VTK
 	writer->Write();
 }
 
@@ -1143,6 +1149,38 @@ void Simulation::handleSurfaceEffects()
 						conc[idx] = 1.0;			   // Set concentration to maximum (saturated)
 						img_data[idx] = (RAWType)Rock; // Clog the pore with precipitate
 					}
+				}
+			}
+		}
+	}
+}
+
+/**
+ * @brief Models precipitation in the bulk domain due to supersaturation.
+ *
+ * This function identifies pore voxels where the chemical concentration 'c' has
+ * exceeded the saturation limit 'c_sat'. At these locations, it simulates
+ * precipitation by changing the material type from Pore to Rock and resetting the
+ * local concentration to the saturation limit.
+ */
+void Simulation::handlePrecipitation()
+{
+	for (int k = local.origin.k; k < (local.origin.k + local.extent.k); ++k)
+	{
+		for (int j = local.origin.j; j < (local.origin.j + local.extent.j); ++j)
+		{
+			for (int i = local.origin.i; i < (local.origin.i + local.extent.i); ++i)
+			{
+				Index idx(i, j, k);
+
+				// Check for supersaturation only in pore voxels
+				if (img_data[idx] == Pore && conc[idx] > c_sat)
+				{
+					// Clog the pore with precipitate
+					img_data[idx] = (RAWType)Rock;
+
+					// Reset the local concentration to the saturation limit
+					conc[idx] = c_sat;
 				}
 			}
 		}

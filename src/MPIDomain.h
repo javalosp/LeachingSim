@@ -3,10 +3,14 @@
 
 #include <memory>
 #include <fstream>
-#include <mpi.h>
+// #include <mpi.h>
 #include <cassert>
 #include "MPIDetails.h"
 #include "Domain.h"
+
+// typedef
+#define IDX_SCHEME ZFastest
+typedef SubIndex<IDX_SCHEME> Index;
 
 extern Domain global;
 
@@ -134,7 +138,7 @@ template <typename T, int Padding, IndexScheme S>
 void MPIDomain<T, Padding, S>::exchangePadding(MPI_Datatype exch_type)
 {
 	MPI_Request reqs[4];
-	MPI_Status stats[4];
+	// MPI_Status stats[4];
 
 	int count = 0;
 	if (MPIDetails::Rank() > 0)
@@ -424,9 +428,5 @@ template <IndexScheme S>
 int MPISubIndex<S>::mpi_rank;
 template <IndexScheme S>
 int MPISubIndex<S>::mpi_comm_size;
-
-// typedef
-#define IDX_SCHEME ZFastest
-typedef SubIndex<IDX_SCHEME> Index;
 
 #endif /* MPIDOMAIN_H_ */

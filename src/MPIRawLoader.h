@@ -66,7 +66,8 @@ void MPIRawLoader<T, Padding, S>::read(size_t header)
 			for (int j = this->origin.j; j < (this->origin.j + this->extent.j); ++j)
 			{
 				// Calculate the starting position of the scanline in the file.
-				long long offset = header + (long long)(i * global.extent.j * global.extent.k + j * global.extent.k) * sizeof(T);
+				// long long offset = header + (long long)(i * global.extent.j * global.extent.k + j * global.extent.k) * sizeof(T);
+				long long offset = header + (long long)i * global.extent.j * global.extent.k * sizeof(T) + (long long)j * global.extent.k * sizeof(T);
 				fin.seekg(offset);
 
 				// Calculate the destination address in this process's padded memory array.

@@ -3,48 +3,49 @@
 
 #include <iostream>
 #include <sstream>
-#include <mpi.h>
+// #include <mpi.h>
+#include <petsc.h>
 #include "compiler_opts.h"
 
 struct int3
 {
 	int i, j, k;
 	int3()
-	:i(0),j(0),k(0)
-	{
-	};
+		: i(0), j(0), k(0) {
+		  };
 
 	int3(int i, int j, int k)
-	:i(i),j(j),k(k)
+		: i(i), j(j), k(k)
 	{
 	}
 
-	virtual ~int3()
+	// virtual ~int3()
+	~int3()
 	{
 	}
 
-	virtual bool operator==(const int3& b)
+	virtual bool operator==(const int3 &b)
 	{
-		return (i==b.i && j==b.j && k==b.k);
+		return (i == b.i && j == b.j && k == b.k);
 	}
 
 	virtual unsigned int size() const
 	{
-		return i*j*k;
+		return i * j * k;
 	}
 
-	int3 operator+(const int3& b)
+	int3 operator+(const int3 &b)
 	{
-		return int3(i+b.i,j+b.j,k+b.k);
+		return int3(i + b.i, j + b.j, k + b.k);
 	}
 
-	int3 operator-(const int3& b)
+	int3 operator-(const int3 &b)
 	{
-		return int3(i-b.i,j-b.j,k-b.k);
+		return int3(i - b.i, j - b.j, k - b.k);
 	}
 };
 
-std::ostream& operator<< (std::ostream& out, const int3& v);
+std::ostream &operator<<(std::ostream &out, const int3 &v);
 
 extern MPI_Datatype MPI_DOMAIN;
 
@@ -62,7 +63,7 @@ public:
 	int3 extent;
 };
 
-std::ostream& operator<<(std::ostream& out, const Domain& d);
+std::ostream &operator<<(std::ostream &out, const Domain &d);
 
 /*
  * Class for handling the conversion between 3D (subscript) indices
@@ -77,7 +78,7 @@ enum IndexScheme
 };
 
 // the class
-template<IndexScheme S>
+template <IndexScheme S>
 class SubIndex : public int3
 {
 public:
@@ -86,18 +87,16 @@ public:
 	}
 
 	SubIndex(int i, int j, int k)
-	:int3(i,j,k)
+		: int3(i, j, k)
 	{
 	}
 
-	SubIndex(const Domain& dom, int array_id);
-	int arrayId(const Domain& dom);
+	SubIndex(const Domain &dom, int array_id);
+	int arrayId(const Domain &dom);
 
-	virtual bool valid(const Domain& dom)
+	virtual bool valid(const Domain &dom)
 	{
-		return !(i < dom.origin.i || i >= (dom.origin.i+dom.extent.i)
-				|| j < dom.origin.j || j >= (dom.origin.j+dom.extent.j)
-				|| k < dom.origin.k || k >= (dom.origin.k+dom.extent.k) );
+		return !(i < dom.origin.i || i >= (dom.origin.i + dom.extent.i) || j < dom.origin.j || j >= (dom.origin.j + dom.extent.j) || k < dom.origin.k || k >= (dom.origin.k + dom.extent.k));
 	}
 };
 

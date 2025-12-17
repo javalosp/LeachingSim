@@ -1,5 +1,6 @@
 #include "utils.h"
-#include "stdint.h"
+// #include "stdint.h"
+#include <cstdint>
 #include <iostream>
 
 using namespace std;
@@ -25,7 +26,8 @@ unique_ptr<char[]> base64_encode(const unsigned char *data,
 
     unique_ptr<char[]> encoded_data(new char[*output_length]);
 
-    for (int i = 0, j = 0; i < input_length;)
+    // for (int i = 0, j = 0; i < input_length;)
+    for (size_t i = 0, j = 0; i < input_length;)
     {
 
         uint32_t octet_a = i < input_length ? data[i++] : 0;

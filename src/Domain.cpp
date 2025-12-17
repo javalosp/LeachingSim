@@ -132,7 +132,8 @@ template <>
 int SubIndex<XFastest>::arrayId(const Domain &dom)
 {
 	int idx = (i - dom.origin.i) + (j - dom.origin.j) * (dom.extent.i) + (k - dom.origin.k) * (dom.extent.i * dom.extent.j);
-	if (idx > dom.extent.size())
+	// if (idx > dom.extent.size())
+	if ((unsigned int)idx > dom.extent.size())
 	{
 		std::stringstream msg;
 		msg << "Domain index " << *this << " out of bounds.";

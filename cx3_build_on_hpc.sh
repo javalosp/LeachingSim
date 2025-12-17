@@ -1,43 +1,43 @@
 #!/usr/bin/env bash
 
-# Clean previous build
+# Clean previous build artifacts
 make clean
 
-# Create release directory if it doesn't exist
+# Create release directory
 mkdir -p release
 
-# This is just to make sure that we are using the appropriate version of modules
+# 1. Purge the old Intel environment
 module purge
 
 module load tools/prod
 
-# Load system modules
-# Use 'intel/2023a' because it contains the 2023.1.0 compiler required by Boost.
-#echo "Loading Toolchain intel/2023a..."
-module load intel/2023a
-# Alternatively, we can use iimpi, but it requires an additional module
-#module load iimpi/2023a       # Loads Compiler + MPI
-#module load imkl/2023.1.0     # Loads MKL library for PETSc
+# 2. Load the FOSS Toolchain
+# This loads GCC (compiler) and OpenMPI (mpi)
+echo "Loading Toolchain foss/2023a..."
+module load foss/2023a
 
-# Load Compatible Libraries
-#echo "Loading Dependencies..."
-# Boost: use the specific version that matches the compiler in 'intel/2023a'
-module load Boost/1.82.0-intel-compilers-2023.1.0
+# 3. Load Compatible Libraries
+echo "Loading Dependencies..."
 
-# PETSc & VTK: 
-module load PETSc/3.17.4-foss-2022a
-module load VTK/9.2.2-foss-2022a
+# Boost (Must match GCC version from foss-2023a)
+module load Boost/1.82.0-GCC-12.3.0
 
-# Some checks
+# PETSc (Matches foss-2023a)
+module load PETSc/3.20.3-foss-2023a
+
+# VTK (Matches foss-2023a)
+module load VTK/9.3.0-foss-2023a
+
+# 4. Diagnostics
 echo "----------------------------------------"
 echo "Environment Loaded:"
 module list
 echo "----------------------------------------"
 echo "Checking compiler..."
-which mpiicpc
-echo "Boost Root: $EBROOTBOOST"
+which mpicxx
 echo "PETSc Dir:  $PETSC_DIR"
+echo "VTK Root:   $EBROOTVTK"
 
-# Compile
-#'VERBOSE=1' helps to see if the correct -I and -L paths are being used
+# 5. Compile
+# We assume the Makefile uses 'mpicxx' which now points to the GCC wrapper
 make uint8 VERBOSE=1

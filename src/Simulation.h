@@ -1,7 +1,7 @@
 #ifndef SIMULATION_H_
 #define SIMULATION_H_
 
-#include <mpi.h>
+// #include <mpi.h>
 #include <petsc.h>
 #include <string>
 #include <random>

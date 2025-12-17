@@ -1,13 +1,12 @@
 #ifndef MPIDETAILS_H_
 #define MPIDETAILS_H_
 
-#include <mpi.h>
+// #include <mpi.h>
 #include <petsc.h>
 
 class MPIDetails
 {
 public:
-
 	static int Rank();
 	static int CommSize();
 

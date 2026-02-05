@@ -639,19 +639,22 @@ void Simulation::setupConcentrationEqns(double dt)
 				// Set values the linear system (Ax = b) for air, sulphide and rock voxels
 				if (voxel_type == Air)
 				{
-					MatSetValue(coeff_mat, arridx, arridx, 1.0, INSERT_VALUES);
+					// MatSetValue(coeff_mat, arridx, arridx, 1.0, INSERT_VALUES);
+					MatSetValue(coeff_mat, arridx, arridx, 1.0, ADD_VALUES);
 					VecSetValue(sources_vec, arridx, 0.0, INSERT_VALUES);
 					continue;
 				}
 				else if (voxel_type >= Sulphide)
 				{
 					// Set the Sulphide source value (1.0)
-					MatSetValue(coeff_mat, arridx, arridx, 1.0, INSERT_VALUES);
+					// MatSetValue(coeff_mat, arridx, arridx, 1.0, INSERT_VALUES);
+					MatSetValue(coeff_mat, arridx, arridx, 1.0, ADD_VALUES);
 					VecSetValue(sources_vec, arridx, 1.0, INSERT_VALUES);
 					continue;
 				}
 				else if (voxel_type == Rock)
 				{
+					// MatSetValue(coeff_mat, arridx, arridx, 1.0, INSERT_VALUES);
 					MatSetValue(coeff_mat, arridx, arridx, 1.0, INSERT_VALUES);
 					VecSetValue(sources_vec, arridx, conc[idx], INSERT_VALUES);
 					continue;

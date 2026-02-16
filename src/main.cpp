@@ -36,7 +36,7 @@ int main(int argc, char *argv[])
 
 		// Command line argument parsing
 		opts::options_description cmd_opts("Command line arguments");
-		cmd_opts.add_options()("help,h", "Print this message and exit.")("raw-file", opts::value<string>()->required(), "Input RAW file specifying the domain.")("xext", opts::value<int>()->required(), "The x extent of the domain")("yext", opts::value<int>()->required(), "The y extent of the domain")("zext", opts::value<int>()->required(), "The z extent of the domain")("out_dir", opts::value<string>()->default_value("./output"), "The output directory")("header_size", opts::value<size_t>()->default_value(0), "RAW file header size in bytes.")("voxel_size", opts::value<double>()->default_value(1.), "Size of voxels (m).")("D", opts::value<double>()->default_value(1.), "Diffusion constant (m^2/s).")("kext", opts::value<double>()->default_value(1.), "Mass transfer to exterior.")("kreac", opts::value<double>()->default_value(1.), "Reaction transfer from sulphide grains.")("Dpore_fac", opts::value<double>()->default_value(1.), "Pore diffusivity enhancement factor")("dt", opts::value<double>()->default_value(1.), "Simulation time step (s).")("tmax", opts::value<double>()->default_value(10.), "Maximum simulation time (s).")("nout", opts::value<int>()->default_value(1), "Output every N-th time step.")("seed", opts::value<size_t>()->default_value(42), "Pseudo-RNG seed value.")("csat", opts::value<double>()->default_value(0.95), "Saturation concentration limit.")("evap_flux", opts::value<double>()->default_value(1e-7), "Evaporative flux (m/s)");
+		cmd_opts.add_options()("help,h", "Print this message and exit.")("raw-file", opts::value<string>()->required(), "Input RAW file specifying the domain.")("xext", opts::value<int>()->required(), "The x extent of the domain")("yext", opts::value<int>()->required(), "The y extent of the domain")("zext", opts::value<int>()->required(), "The z extent of the domain")("out_dir", opts::value<string>()->default_value("./output"), "The output directory")("header_size", opts::value<size_t>()->default_value(0), "RAW file header size in bytes.")("voxel_size", opts::value<double>()->default_value(1.), "Size of voxels (m).")("D", opts::value<double>()->default_value(1.), "Diffusion constant (m^2/s).")("kext", opts::value<double>()->default_value(1.), "Mass transfer to exterior.")("kreac", opts::value<double>()->default_value(1.), "Reaction transfer from sulphide grains.")("Dpore_fac", opts::value<double>()->default_value(1.), "Pore diffusivity enhancement factor")("dt", opts::value<double>()->default_value(1.), "Simulation time step (s).")("tmax", opts::value<double>()->default_value(10.), "Maximum simulation time (s).")("nout", opts::value<int>()->default_value(1), "Output every N-th time step.")("seed", opts::value<size_t>()->default_value(42), "Pseudo-RNG seed value.")("csat", opts::value<double>()->default_value(0.95), "Saturation concentration limit.")("evap_flux", opts::value<double>()->default_value(1e-7), "Evaporative flux (m/s)")("theta", opts::value<double>()->default_value(1.0), "Time scheme (0=Explicit, 0.5=Crank-Nicolson, 1.0=Implicit)");
 
 		opts::variables_map cmd;
 		opts::store(opts::parse_command_line(argc, argv, cmd_opts), cmd);
@@ -60,6 +60,7 @@ int main(int argc, char *argv[])
 		the_simulation.Dpore_fac = cmd["Dpore_fac"].as<double>();
 		the_simulation.c_sat = cmd["csat"].as<double>();
 		the_simulation.evaporative_flux = cmd["evap_flux"].as<double>();
+		the_simulation.theta = cmd["theta"].as<double>();
 
 		// Maps arguments to the code's (i, j, k) = (Z, Y, X) internal indexing
 		int3 global_extent(cmd["zext"].as<int>(), cmd["yext"].as<int>(), cmd["xext"].as<int>());
@@ -86,23 +87,38 @@ int main(int argc, char *argv[])
 
 		// Choose the actual dt to use
 		double dt_actual;
-		double stability_factor = 0.9; // Use 90% of the max stable step for safety
-		if (dt_user > dt_stable_max)
-		{
-			dt_actual = stability_factor * dt_stable_max;
-			if (mpi_rank == 0)
-			{
-				cout << "[Warning] User requested dt (" << dt_user
-					 << "s) exceeds stability limit (" << dt_stable_max
-					 << "s). Using adjusted dt = " << dt_actual << "s." << endl;
-			}
-		}
-		else
+
+		// If Theta >= 0.5, the scheme is unconditionally stable for transport
+		if (the_simulation.theta >= 0.5) 
 		{
 			dt_actual = dt_user;
 			if (mpi_rank == 0)
 			{
+				cout << "Using Theta=" << the_simulation.theta 
+				     << " (Unconditionally Stable). Using user dt = " << dt_actual << "s." << endl;
+			}
+		} 
+		else 
+		{
+			// Explicit scheme (Theta < 0.5), requires stability check
+			double stability_factor = 0.9; 
+			if (dt_user > dt_stable_max)
+			{
+				dt_actual = stability_factor * dt_stable_max;
+				if (mpi_rank == 0)
+				{
+					cout << "[Warning] Explicit scheme requested. User dt (" << dt_user
+						 << "s) exceeds stability limit (" << dt_stable_max
+					 	 << "s). Using adjusted dt = " << dt_actual << "s." << endl;
+				}
+			}
+			else
+			{
+				dt_actual = dt_user;
+				if (mpi_rank == 0)
+				{
 				cout << "Using user-specified dt = " << dt_actual << "s (stable)." << endl;
+				}
 			}
 		}
 

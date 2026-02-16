@@ -1,5 +1,7 @@
 #PBS -lselect=2:ncpus=64:mem=100gb
 #PBS -lwalltime=48:00:00
+#PBS -j oe
+#PBS -N LeachingSim_Job
 
 module load tools/prod
 module load foss/2023a
@@ -7,7 +9,13 @@ module load Boost/1.82.0-GCC-12.3.0
 module load PETSc/3.20.3-foss-2023a
 module load VTK/9.3.0-foss-2023a
 
-cd $HOME/LeachingSim
+cd $EPHEMERAL/LeachingSim
+
+echo "Job running on nodes:"
+cat $PBS_NODEFILE
+
+# Run MPI with error redirection
+# 2>&1 redirects stderr (2) to stdout (1), so both go into the log file.
 mpiexec ./release/LeachingSim_uint8 \
        --raw-file LA3_d0_v1_uint8_unnormalised_338_338_283.raw \
        --xext 338 \
@@ -19,4 +27,5 @@ mpiexec ./release/LeachingSim_uint8 \
        --D 0.0000001 \
        --kreac 1000 \
        --voxel_size 0.000017 \
-       --out_dir ./simulation_output
+       --out_dir ./output \
+       > simulation_log 2>&1

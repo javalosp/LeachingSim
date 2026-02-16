@@ -1,0 +1,72 @@
+#PBS -lselect=1:ncpus=10:mem=100gb
+#PBS -lwalltime=00:30:00
+#PBS -j oe
+#PBS -N short_test
+
+module load tools/prod
+module load foss/2023a
+module load Boost/1.82.0-GCC-12.3.0
+module load PETSc/3.20.3-foss-2023a
+module load VTK/9.3.0-foss-2023a
+
+cd $EPHEMERAL/LeachingSim
+
+# Optional: Generate the input file first (Requires loading python and a venv with Numpy)
+# eval "$(~/miniforge3/bin/conda shell.bash hook)"
+# conda activate general_venv
+# python generate_input.py
+
+echo "Job running on nodes:"
+cat $PBS_NODEFILE
+
+# Parameters for the short test:
+# dx = 1e-4 m
+# D  = 1e-9 m^2/s
+# Stability limit: dt < dx^2 / (2*D) = 5.0s. We use dt=1.0s.
+
+# Run MPI with error redirection
+# 2>&1 redirects stderr (2) to stdout (1), so both go into the log file.
+#mpiexec -n 10 --oversubscribe ./release/LeachingSim_uint8 \
+#       --raw-file synthetic_test_input.raw \
+#       --xext 50 \
+#       --yext 50 \
+#       --zext 50 \
+#       --dt 1.0 \
+#       --tmax 100000.0 \
+#       --nout 1000 \
+#       --D 1.0e-9 \
+#       --kreac 1.0e-5 \
+#       --voxel_size 1.0e-4 \
+#       --out_dir ./short_test_output \
+#       > [cite_start]short_test.log 2>&1 [cite: 1, 2, 3]
+
+#mpiexec -n 10 --oversubscribe ./release/LeachingSim_uint8 \
+#       --raw-file synthetic_test_input.raw \
+#       --xext 50 \
+#       --yext 50 \
+#       --zext 50 \
+#       --theta 1.0 \
+#       --dt 86400.0 \
+#       --tmax 2592000.0 \
+#       --nout 1 \
+#       --D 1.0e-9 \
+#       --kreac 1.0e-5 \
+#       --voxel_size 1.0e-4 \
+#       --out_dir ./large_timestep_test_output \
+#       > large_timestep_test.log 2>&1
+
+mpiexec -n 10 --oversubscribe ./release/LeachingSim_uint8 \
+       --raw-file synthetic_test_input.raw \
+       --xext 50 \
+       --yext 50 \
+       --zext 50 \
+       --csat 1.0 \
+       --theta 1.0 \
+       --dt 3600.0 \
+       --tmax 43200.0 \
+       --nout 1 \
+       --D 1.0 \
+       --kreac 1.0e-4 \
+       --voxel_size 1.0 \
+       --out_dir ./non-physical_large_timestep_test_output \
+       > non-physical-large_timestep_test.log 2>&1

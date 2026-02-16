@@ -69,6 +69,7 @@ public:
 	double Dpore_fac;
 	double kext;
 	double kreac;
+	double theta;	// For Crank-Nicolson time discretisation
 	bool use_gamma;
 	double gamma_alpha;
 	double gamma_beta;

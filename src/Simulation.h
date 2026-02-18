@@ -20,7 +20,8 @@ enum VTKOutput
 	Saturation = 0x040,
 	Flux_Vec = 0x080, // New flag for the flux vector
 	CapPressure = 0x100,
-	RelPermeability = 0x200
+	RelPermeability = 0x200,
+	AcidConc = 0x400
 };
 
 class Simulation
@@ -37,7 +38,9 @@ public:
 
 	// Physics Initialisation & Time-Stepping
 	void initProperties();
+	void initFields();
 	void initFrac();
+	void initAcid();
 	void initSaturation();
 	void setupReactionRates();
 	int updateFrac(double dt);
@@ -69,7 +72,7 @@ public:
 	double Dpore_fac;
 	double kext;
 	double kreac;
-	double theta;	// For Crank-Nicolson time discretisation
+	double theta; // For Crank-Nicolson time discretisation
 	bool use_gamma;
 	double gamma_alpha;
 	double gamma_beta;
@@ -89,6 +92,7 @@ public:
 	// Solution Fields
 	MPIDomain<double, 1, IDX_SCHEME> pressure;
 	MPIDomain<double, 1, IDX_SCHEME> conc;
+	MPIDomain<double, 1, IDX_SCHEME> conc_acid;
 	MPIDomain<double, 1, IDX_SCHEME> flux_x;
 	MPIDomain<double, 1, IDX_SCHEME> flux_y;
 	MPIDomain<double, 1, IDX_SCHEME> flux_z;
@@ -116,7 +120,7 @@ private:
 
 	// PETSc data
 	Vec sources_vec;
-	Vec conc_vec;
+	Vec solution_vec;
 	Mat coeff_mat;
 
 	// PETSc solver variables

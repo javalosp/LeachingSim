@@ -62,19 +62,40 @@ int main(int argc, char *argv[])
 		the_simulation.evaporative_flux = cmd["evap_flux"].as<double>();
 		the_simulation.theta = cmd["theta"].as<double>();
 
+		// Initialise some constants
+		the_simulation.vg_n = 2.0; // Must be strictly > 1.0
+		the_simulation.vg_alpha = 1.0;
+		the_simulation.s_res = 0.05; // 5% residual saturation
+
 		// Maps arguments to the code's (i, j, k) = (Z, Y, X) internal indexing
 		int3 global_extent(cmd["zext"].as<int>(), cmd["yext"].as<int>(), cmd["xext"].as<int>());
 		string out_dir = cmd["out_dir"].as<string>();
 
+		// Initialise the computational domain
 		the_simulation.setupDomain(global_extent);
 		the_simulation.setupPETSc(true);
 
+		// Read the file with the physical domain
 		the_simulation.readRAW(cmd["raw-file"].as<string>(), cmd["header_size"].as<size_t>());
 
-		the_simulation.doExchange();
+		// Initialise fields
+		the_simulation.initFields();
+
+		// Initialise physical state
 		the_simulation.initFrac();
 		the_simulation.initSaturation();
+		the_simulation.initAcid();
 		the_simulation.setupReactionRates();
+
+		// Share the initial state across MPI boundaries
+		the_simulation.doExchange();
+
+		// Precalculate initial properties before iteration 0 begins
+		// This ensures coeff_mat is correctly built at t=0
+		the_simulation.updateRelativePermeability();
+		the_simulation.updateCapillaryPressure();
+		the_simulation.initProperties();
+		the_simulation.permeability.exchangePadding(MPI_DOUBLE);
 
 		// Time Step Stability Check (Diffusive)
 		double dx = the_simulation.dx;
@@ -89,19 +110,19 @@ int main(int argc, char *argv[])
 		double dt_actual;
 
 		// If Theta >= 0.5, the scheme is unconditionally stable for transport
-		if (the_simulation.theta >= 0.5) 
+		if (the_simulation.theta >= 0.5)
 		{
 			dt_actual = dt_user;
 			if (mpi_rank == 0)
 			{
-				cout << "Using Theta=" << the_simulation.theta 
-				     << " (Unconditionally Stable). Using user dt = " << dt_actual << "s." << endl;
+				cout << "Using Theta=" << the_simulation.theta
+					 << " (Unconditionally Stable). Using user dt = " << dt_actual << "s." << endl;
 			}
-		} 
-		else 
+		}
+		else
 		{
 			// Explicit scheme (Theta < 0.5), requires stability check
-			double stability_factor = 0.9; 
+			double stability_factor = 0.9;
 			if (dt_user > dt_stable_max)
 			{
 				dt_actual = stability_factor * dt_stable_max;
@@ -109,7 +130,7 @@ int main(int argc, char *argv[])
 				{
 					cout << "[Warning] Explicit scheme requested. User dt (" << dt_user
 						 << "s) exceeds stability limit (" << dt_stable_max
-					 	 << "s). Using adjusted dt = " << dt_actual << "s." << endl;
+						 << "s). Using adjusted dt = " << dt_actual << "s." << endl;
 				}
 			}
 			else
@@ -117,7 +138,7 @@ int main(int argc, char *argv[])
 				dt_actual = dt_user;
 				if (mpi_rank == 0)
 				{
-				cout << "Using user-specified dt = " << dt_actual << "s (stable)." << endl;
+					cout << "Using user-specified dt = " << dt_actual << "s (stable)." << endl;
 				}
 			}
 		}
@@ -139,27 +160,25 @@ int main(int argc, char *argv[])
 			if (mpi_rank == 0)
 				cout << "\nIteration: " << n << " | Time: " << t << "s" << endl;
 
-			the_simulation.updateRelativePermeability();
-			the_simulation.updateCapillaryPressure();
-
-			the_simulation.initProperties();
 			the_simulation.setupPressureEqns();
 			the_simulation.solvePressure();
 			the_simulation.pressure.exchangePadding(MPI_DOUBLE);
-			the_simulation.calculateFlux();
 
+			the_simulation.calculateFlux();
 			// UPDATED: Pass dt_actual instead of unsafe dt
 			the_simulation.updateSaturation(dt_actual);
-
 			the_simulation.handleSurfaceEffects();
+
 			the_simulation.flux_x.exchangePadding(MPI_DOUBLE);
 			the_simulation.flux_y.exchangePadding(MPI_DOUBLE);
 			the_simulation.flux_z.exchangePadding(MPI_DOUBLE);
 
 			// UPDATED: Pass dt_actual instead of unsafe dt
 			the_simulation.setupConcentrationEqns(dt_actual);
-
 			the_simulation.solveConc();
+			the_simulation.conc.exchangePadding(MPI_DOUBLE);
+			the_simulation.conc_acid.exchangePadding(MPI_DOUBLE);
+
 			the_simulation.handlePrecipitation();
 
 			// UPDATED: Pass dt_actual instead of unsafe dt
@@ -167,11 +186,16 @@ int main(int argc, char *argv[])
 			int leached_total = 0;
 			MPI_Allreduce(&leached_this_step, &leached_total, 1, MPI_INT, MPI_SUM, PETSC_COMM_WORLD);
 
+			the_simulation.updateRelativePermeability();
+			the_simulation.updateCapillaryPressure();
+			the_simulation.initProperties();
+			the_simulation.permeability.exchangePadding(MPI_DOUBLE);
+
 			if (n % nout == 0)
 			{
 				if (mpi_rank == 0)
 					cout << "Writing output for time step " << n << "..." << endl;
-				the_simulation.writeVTKFile(out_dir + "/output", n, (VTKOutput)(Conc | Pressure | Frac | Type | Flux_Vec | Saturation | CapPressure | RelPermeability | Permeability));
+				the_simulation.writeVTKFile(out_dir + "/output", n, (VTKOutput)(Conc | Pressure | Frac | Type | Flux_Vec | Saturation | CapPressure | RelPermeability | Permeability | AcidConc));
 			}
 
 			t += dt_actual; // Using the stable time step

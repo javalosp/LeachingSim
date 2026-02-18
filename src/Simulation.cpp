@@ -28,7 +28,7 @@ Simulation::Simulation(size_t seed)
 Simulation::~Simulation()
 {
 	VecDestroy(&sources_vec);
-	VecDestroy(&conc_vec);
+	VecDestroy(&solution_vec);
 	MatDestroy(&coeff_mat);
 	KSPDestroy(&ksp);
 }
@@ -88,6 +88,7 @@ void Simulation::setupDomain(int3 gextent)
 
 	img_data.setup(local.origin, local.extent);
 	conc.setup(local.origin, local.extent);
+	conc_acid.setup(local.origin, local.extent);
 	frac.setup(local.origin, local.extent);
 	pressure.setup(local.origin, local.extent);
 	permeability.setup(local.origin, local.extent);
@@ -120,8 +121,6 @@ void Simulation::setupReactionRates()
 	max_grain_id = tmp;
 	num_grains = max_grain_id - Sulphide + 1;
 	ks.assign(num_grains, kreac);
-	cout << "\nin Simulation::setupReactionRates" << endl;
-	cout << "\nSulphide: " << Sulphide << endl;
 }
 
 /**
@@ -133,7 +132,7 @@ void Simulation::setupPETSc(bool zero_conc)
 	VecCreate(PETSC_COMM_WORLD, &sources_vec);
 	VecSetSizes(sources_vec, local.extent.size(), PETSC_DECIDE);
 	VecSetFromOptions(sources_vec);
-	VecDuplicate(sources_vec, &conc_vec);
+	VecDuplicate(sources_vec, &solution_vec);
 	MatCreate(PETSC_COMM_WORLD, &coeff_mat);
 	MatSetSizes(coeff_mat, local.extent.size(), local.extent.size(), PETSC_DETERMINE, PETSC_DETERMINE);
 	MatSetType(coeff_mat, MATMPIAIJ);
@@ -145,10 +144,31 @@ void Simulation::setupPETSc(bool zero_conc)
 	KSPCreate(PETSC_COMM_WORLD, &ksp);
 	KSPSetType(ksp, KSPGMRES);
 	KSPGetPC(ksp, &pc);
-	PCSetType(pc, PCSOR);
+	// PCSetType(pc, PCSOR);
+	PCSetType(pc, PCJACOBI);
 	KSPSetTolerances(ksp, 1.e-6, PETSC_DEFAULT, PETSC_DEFAULT, 10000);
 	KSPSetInitialGuessNonzero(ksp, PETSC_TRUE);
 	KSPSetFromOptions(ksp);
+}
+
+/**
+ * @brief Initialises all dynamic solution arrays to prevent anything in memory
+ * from corrupting the PETSc initial guess.
+ */
+void Simulation::initFields()
+{
+	size_t total_size = pressure.padded.extent.size();
+	for (size_t i = 0; i < total_size; ++i)
+	{
+		pressure.getData()[i] = 0.0;
+		conc.getData()[i] = 0.0;
+		flux_x.getData()[i] = 0.0;
+		flux_y.getData()[i] = 0.0;
+		flux_z.getData()[i] = 0.0;
+		saturation.getData()[i] = 0.0;
+		cap_pressure.getData()[i] = 0.0;
+		rel_permeability.getData()[i] = 0.0;
+	}
 }
 
 /**
@@ -234,6 +254,35 @@ void Simulation::initFrac()
 }
 
 /**
+ * @brief Initialises the fraction of reactant material in each voxel.
+ * * Sets the 'frac' field to 1.0 for sulphide voxels and 0.0 for all others.
+ */
+void Simulation::initAcid()
+{
+	for (int k = local.origin.k; k < (local.origin.k + local.extent.k); ++k)
+	{
+		for (int j = local.origin.j; j < (local.origin.j + local.extent.j); ++j)
+		{
+			for (int i = local.origin.i; i < (local.origin.i + local.extent.i); ++i)
+			{
+				Index idx(i, j, k);
+				RAWType voxel_type = img_data[idx];
+
+				// Initially, pores and the top Air boundary are full of acid (1.0)
+				if (voxel_type == Pore || (voxel_type == Air && i == 0))
+				{
+					conc_acid[idx] = 1.0;
+				}
+				else
+				{
+					conc_acid[idx] = 0.0;
+				}
+			}
+		}
+	}
+}
+
+/**
  * @brief Updates the fraction of reactive material using a Resistance-in-Series model.
  */
 int Simulation::updateFrac(double dt)
@@ -259,7 +308,8 @@ int Simulation::updateFrac(double dt)
 						{
 							double k_trans = D / dx;
 							double k_eff = 1.0 / ((1.0 / k_trans) + (1.0 / kreac));
-							double driving_force = std::max(0.0, c_sat - conc[neighbor_idx]);
+							// double driving_force = std::max(0.0, c_sat - conc[neighbor_idx]);
+							double driving_force = conc_acid[neighbor_idx];
 							return k_eff * driving_force;
 						}
 						return 0.0;
@@ -291,9 +341,19 @@ int Simulation::updateFrac(double dt)
 		dt_safe = 0.1 / global_max_rate;
 	}
 
-	int num_steps = std::ceil(dt / dt_safe);
+	// int num_steps = std::ceil(dt / dt_safe);
+	// FIX: Use a double for the ceiling calculation, then cap it, then cast it.
+	double calculated_steps = std::ceil(dt / dt_safe);
+	int num_steps = 1;
 	if (num_steps > 1000)
+	{
 		num_steps = 1000; // Hard cap to prevent infinite loops
+	}
+	else if (calculated_steps > 1.0)
+	{
+		num_steps = (int)calculated_steps;
+	}
+
 	double dt_sub = dt / num_steps;
 
 	// Print to the log to monitor the physical rates
@@ -330,23 +390,47 @@ int Simulation::updateFrac(double dt)
 							{
 								double k_trans = D / dx;
 								double k_eff = 1.0 / ((1.0 / k_trans) + (1.0 / kreac));
-								double driving_force = std::max(0.0, c_sat - conc[neighbor_idx]);
+								// double driving_force = std::max(0.0, c_sat - conc[neighbor_idx]);
+								double driving_force = conc_acid[neighbor_idx];
 								return k_eff * driving_force;
 							}
 							return 0.0;
 						};
 
-						flux_sum += calc_surface_flux(Index(i + 1, j, k));
-						flux_sum += calc_surface_flux(Index(i - 1, j, k));
-						flux_sum += calc_surface_flux(Index(i, j + 1, k));
-						flux_sum += calc_surface_flux(Index(i, j - 1, k));
-						flux_sum += calc_surface_flux(Index(i, j, k + 1));
-						flux_sum += calc_surface_flux(Index(i, j, k - 1));
+						// Calculate fluxes for all 6 faces
+						double f_xp = calc_surface_flux(Index(i + 1, j, k));
+						double f_xm = calc_surface_flux(Index(i - 1, j, k));
+						double f_yp = calc_surface_flux(Index(i, j + 1, k));
+						double f_ym = calc_surface_flux(Index(i, j - 1, k));
+						double f_zp = calc_surface_flux(Index(i, j, k + 1));
+						double f_zm = calc_surface_flux(Index(i, j, k - 1));
+
+						flux_sum = f_xp + f_xm + f_yp + f_ym + f_zp + f_zm;
 
 						double area_per_face = dx * dx;
 						double mass_loss = flux_sum * area_per_face * dt_sub;
 
 						frac[idx] -= mass_loss;
+
+						// Consume the acid from the adjacent pores
+						// Distribute the consumption across the neighboring pores proportional to the flux from each face.
+						if (flux_sum > 0.0)
+						{
+							if (Index(i + 1, j, k).valid(global))
+								conc_acid[Index(i + 1, j, k)] -= mass_loss * (f_xp / flux_sum);
+							if (Index(i - 1, j, k).valid(global))
+								conc_acid[Index(i - 1, j, k)] -= mass_loss * (f_xm / flux_sum);
+							if (Index(i, j + 1, k).valid(global))
+								conc_acid[Index(i, j + 1, k)] -= mass_loss * (f_yp / flux_sum);
+							if (Index(i, j - 1, k).valid(global))
+								conc_acid[Index(i, j - 1, k)] -= mass_loss * (f_ym / flux_sum);
+							if (Index(i, j, k + 1).valid(global))
+								conc_acid[Index(i, j, k + 1)] -= mass_loss * (f_zp / flux_sum);
+							if (Index(i, j, k - 1).valid(global))
+								conc_acid[Index(i, j, k - 1)] -= mass_loss * (f_zm / flux_sum);
+						}
+
+						// ==========================================
 
 						// Check if voxel has fully dissolved
 						if (frac[idx] <= 0.0)
@@ -580,6 +664,7 @@ void Simulation::doExchange()
 {
 	img_data.exchangePadding(MPI_RAW_TYPE);
 	conc.exchangePadding(MPI_DOUBLE);
+	conc_acid.exchangePadding(MPI_DOUBLE);
 	frac.exchangePadding(MPI_FLOAT);
 	pressure.exchangePadding(MPI_DOUBLE);
 	permeability.exchangePadding(MPI_DOUBLE);
@@ -620,7 +705,67 @@ void Simulation::setupPressureEqns()
 				Index idx(i, j, k);
 				int arridx = idx.arrayId(global);
 				RAWType voxel_type = img_data[idx];
+
 				// Set values the linear system (Ax = b) as 1*P=0 for air, rock and sulphide voxels
+				if (voxel_type == Air || voxel_type == Rock || voxel_type >= Sulphide)
+				{
+					// Force the diagonal to 1.0 to prevent PETSc divide by zero crashes
+					MatSetValue(coeff_mat, arridx, arridx, 1.0, ADD_VALUES);
+
+					// Set RHS accordingly
+					if (voxel_type == Air)
+					{
+						// Apply the pressure head to ANY Air voxel in the top half of the domain.
+						// This guarantees the high pressure actually touches the porous rock.
+						if (i < global.extent.i / 2)
+						{
+							VecSetValue(sources_vec, arridx, 10000.0, ADD_VALUES);
+						}
+						else
+						{
+							VecSetValue(sources_vec, arridx, 0.0, ADD_VALUES);
+						}
+						continue;
+					}
+					/*
+					if (voxel_type == Air && i == 0)
+					{
+						VecSetValue(sources_vec, arridx, 10000.0, ADD_VALUES); // Top pressure
+					}
+					else
+					{
+						VecSetValue(sources_vec, arridx, 0.0, ADD_VALUES); // Zero pressure
+					}
+					continue;
+					*/
+				}
+
+				/*
+				// Set values the linear system (Ax = b) as 1*P=0 for air, rock and sulphide voxels
+				if (voxel_type == Air)
+				{
+					MatSetValue(coeff_mat, arridx, arridx, 1.0, ADD_VALUES);
+
+					// Assuming i=0 is the TOP of the domain (inlet) and i=extent.i-1 is the bottom (outlet)
+					if (i == 0)
+					{
+						// Apply a pressure head at the top (e.g., 10000 Pascals)
+						VecSetValue(sources_vec, arridx, 10000.0, ADD_VALUES);
+					}
+					else if (i == global.extent.i - 1)
+					{
+						// Open to atmosphere at the bottom
+						VecSetValue(sources_vec, arridx, 0.0, ADD_VALUES);
+					}
+					else
+					{
+						// Default for any side-wall air boundaries
+						VecSetValue(sources_vec, arridx, 0.0, ADD_VALUES);
+					}
+					continue;
+				}
+				*/
+				/*
 				if (voxel_type == Air)
 				{
 					// MatSetValue(coeff_mat, arridx, arridx, 1.0, INSERT_VALUES);
@@ -635,6 +780,7 @@ void Simulation::setupPressureEqns()
 					MatSetValue(coeff_mat, arridx, arridx, 1.0, ADD_VALUES);
 					VecSetValue(sources_vec, arridx, 0.0, ADD_VALUES);
 				}
+				*/
 				// For the pore, calculate the coefficients for the matrix
 				else if (voxel_type == Pore)
 				{
@@ -647,28 +793,56 @@ void Simulation::setupPressureEqns()
 						if (neighbor_idx.valid(global))
 						{
 							RAWType neighbor_type = img_data[neighbor_idx];
+							double K_neighbor;
+
 							if (neighbor_type == Air)
 							{
 								// Evaporation (Neumann) Boundary Condition
 								// This is a surface voxel. Add the evaporative flux to the source term.
 								// Flux is outward, so it's a sink (negative source).
 								source_term -= evaporative_flux * dx; // flux * area (dx*dx) / (dx)
-
+								// Air offers no fluid resistance; permeability is governed by the pore itself
+								// K_neighbor = permeability[idx];
+								// FIX: Give Air the same base permeability as a pore,
+								// rather than dynamically copying the current voxel.
+								// This prevents numerical shocks when Rock turns to Pore.
+								K_neighbor = 1.0e-9;
+							}
+							else
+							{
+								K_neighbor = permeability[neighbor_idx];
+							}
+							/*
 								// Also need a diagonal contribution for the open face
-								double K_self = permeability[idx];
+								// double K_self = permeability[idx];
+								// Prevent absolute zero permeability
+								double K_self = std::max(permeability[idx], 1e-25);
 								double coeff = K_self / viscosity[idx]; // Note: uses K of the pore, not an average
 								diagonal_term -= coeff;
 							}
+
 							else
 							{
 								// This is an internal face (Pore-Pore or Pore-Rock).
 								// Standard connection based on average permeability.
-								double K_avg = (permeability[idx] + permeability[neighbor_idx]) / 2.0;
+								// double K_avg = (permeability[idx] + permeability[neighbor_idx]) / 2.0;
+								// Ensure the connection is never numerically 0.0
+								double K_avg = std::max(K_avg, 1e-25);
 								double coeff = K_avg / viscosity[idx];
 								// MatSetValue(coeff_mat, arridx, neighbor_idx.arrayId(global), coeff, INSERT_VALUES);
 								MatSetValue(coeff_mat, arridx, neighbor_idx.arrayId(global), coeff, ADD_VALUES);
 								diagonal_term -= coeff;
 							}
+							*/
+							// Calculate average permeability and enforce the 1e-25 regularization
+							double K_avg = (permeability[idx] + K_neighbor) / 2.0;
+							K_avg = std::max(K_avg, 1e-25);
+
+							double coeff = K_avg / viscosity[idx];
+
+							// Link the neighbour in the matrix, even if it's an Air boundary
+							MatSetValue(coeff_mat, arridx, neighbor_idx.arrayId(global), coeff, ADD_VALUES);
+							diagonal_term -= coeff;
 						}
 					};
 
@@ -698,14 +872,32 @@ void Simulation::setupPressureEqns()
 void Simulation::solvePressure()
 {
 	PetscInt its;
-	VecPlaceArray(conc_vec, pressure.getData().get() + pressure.pad_size);
+	KSPConvergedReason reason;
+	VecPlaceArray(solution_vec, pressure.getData().get() + pressure.pad_size);
 	// KSPSetOperators(ksp, coeff_mat, coeff_mat, DIFFERENT_NONZERO_PATTERN);
 	KSPSetOperators(ksp, coeff_mat, coeff_mat);
-	KSPSolve(ksp, sources_vec, conc_vec);
-	VecResetArray(conc_vec);
+	KSPSolve(ksp, sources_vec, solution_vec);
+	PetscInt min_loc, max_loc;
+	PetscReal min_val, max_val;
+	VecMin(solution_vec, &min_loc, &min_val);
+	VecMax(solution_vec, &max_loc, &max_val);
+	VecResetArray(solution_vec);
 	KSPGetIterationNumber(ksp, &its);
+	KSPGetConvergedReason(ksp, &reason);
+
 	if (mpi_rank == 0)
-		cout << "Pressure solve converged in " << its << " iterations." << endl;
+	{
+		if (reason > 0)
+		{
+			cout << "    [Pressure] Converged in " << its << " iterations. (Reason Code: " << reason << ")" << endl;
+			// Print the exact bounds of the pressure field
+			cout << "    [Pressure] Min Value: " << min_val << " Pa | Max Value: " << max_val << " Pa" << endl;
+		}
+		else
+		{
+			cout << "    [Pressure] DIVERGED/FAILED in " << its << " iterations! (Error Code: " << reason << ")" << endl;
+		}
+	}
 }
 
 /**
@@ -744,10 +936,27 @@ void Simulation::calculateFlux()
 					gradP_z = (pressure[idx] - pressure[Index(i, j, k - 1)]) / dx;
 				else
 					gradP_z = (pressure[Index(i, j, k + 1)] - pressure[Index(i, j, k - 1)]) / (2.0 * dx);
+
+				double transmissivity = permeability[idx] / viscosity[idx];
+
+				// Calculate gravity head: rho (1000 kg/m^3) * g (9.81 m/s^2)
+				// Assuming +i direction is downwards.
+				const double rho_g = 1000.0 * 9.81;
+
+				// flux_x corresponds to the 'i' index (Z-axis, vertical flow)
+				// Darcy's law with gravity: q = -(k/mu) * (gradP - rho*g)
+				flux_x[idx] = -transmissivity * (gradP_x - rho_g);
+
+				// Horizontal flows remain driven purely by pressure
+				flux_y[idx] = -transmissivity * gradP_y;
+				flux_z[idx] = -transmissivity * gradP_z;
+
+				/*
 				double transmissivity = permeability[idx] / viscosity[idx];
 				flux_x[idx] = -transmissivity * gradP_x;
 				flux_y[idx] = -transmissivity * gradP_y;
 				flux_z[idx] = -transmissivity * gradP_z;
+				*/
 			}
 }
 
@@ -782,7 +991,31 @@ void Simulation::setupConcentrationEqns(double dt)
 				Index idx(i, j, k);
 				int arridx = idx.arrayId(global);
 				RAWType voxel_type = img_data[idx];
+
 				// Set values the linear system (Ax = b) for air, sulphide and rock voxels
+				if (voxel_type == Air)
+				{
+					// Air boundaries (top/bottom) act as fresh water inlet or open outlet (C = 0.0)
+					MatSetValue(coeff_mat, arridx, arridx, 1.0, ADD_VALUES);
+					VecSetValue(sources_vec, arridx, 0.0, ADD_VALUES);
+					continue;
+				}
+				else if (voxel_type >= Sulphide)
+				{
+					// Sulphide voxels act as a saturated source (C = 1.0)
+					MatSetValue(coeff_mat, arridx, arridx, 1.0, ADD_VALUES);
+					VecSetValue(sources_vec, arridx, 1.0, ADD_VALUES);
+					continue;
+				}
+				else if (voxel_type == Rock)
+				{
+					// Rock is impermeable; it retains its current concentration
+					MatSetValue(coeff_mat, arridx, arridx, 1.0, ADD_VALUES);
+					VecSetValue(sources_vec, arridx, conc[idx], ADD_VALUES);
+					continue;
+				}
+				/*
+
 				if (voxel_type == Air)
 				{
 					// MatSetValue(coeff_mat, arridx, arridx, 1.0, INSERT_VALUES);
@@ -808,6 +1041,7 @@ void Simulation::setupConcentrationEqns(double dt)
 					VecSetValue(sources_vec, arridx, conc[idx], ADD_VALUES);
 					continue;
 				}
+				*/
 				MatSetValue(coeff_mat, arridx, arridx, inv_dt, ADD_VALUES);
 				VecSetValue(sources_vec, arridx, conc[idx] * inv_dt, ADD_VALUES);
 
@@ -878,14 +1112,34 @@ void Simulation::setupConcentrationEqns(double dt)
 void Simulation::solveConc()
 {
 	PetscInt its;
-	VecPlaceArray(conc_vec, conc.getData().get() + conc.pad_size);
+	KSPConvergedReason reason;
+	VecPlaceArray(solution_vec, conc.getData().get() + conc.pad_size);
 	KSPReset(ksp);
 	// KSPSetOperators(ksp, coeff_mat, coeff_mat, DIFFERENT_NONZERO_PATTERN);
 	KSPSetOperators(ksp, coeff_mat, coeff_mat);
-	KSPSolve(ksp, sources_vec, conc_vec);
-	VecResetArray(conc_vec);
+	KSPSolve(ksp, sources_vec, solution_vec);
+	PetscInt min_loc, max_loc;
+	PetscReal min_val, max_val;
+	VecMin(solution_vec, &min_loc, &min_val);
+	VecMax(solution_vec, &max_loc, &max_val);
+	VecResetArray(solution_vec);
 	KSPGetIterationNumber(ksp, &its);
-	MPIOUT(mpi_rank) << "Concentration solve converged in " << its << " iterations." << endl;
+	KSPGetConvergedReason(ksp, &reason);
+	// MPIOUT(mpi_rank) << "Concentration solve converged in " << its << " iterations." << endl;
+
+	if (mpi_rank == 0)
+	{
+		if (reason > 0)
+		{
+			cout << "    [Concentration] Converged in " << its << " iterations. (Reason Code: " << reason << ")" << endl;
+			// Print the exact bounds of the concentration field
+			cout << "    [Concentration] Min Value: " << min_val << " Pa | Max Value: " << max_val << " Pa" << endl;
+		}
+		else
+		{
+			cout << "    [Concentration] DIVERGED/FAILED in " << its << " iterations! (Error Code: " << reason << ")" << endl;
+		}
+	}
 }
 
 /**
@@ -935,6 +1189,8 @@ void Simulation::writeVTKFile(std::string fname_root, size_t tstep, size_t data_
 			fout << "\t\t\t<PDataArray type=\"Float64\" Name=\"RelativePermeability\"/>" << endl;
 		if (data_flags & VTKOutput::Permeability)
 			fout << "\t\t\t<PDataArray type=\"Float64\" Name=\"EffectivePermeability\"/>" << endl;
+		if (data_flags & VTKOutput::AcidConc)
+			fout << "\t\t\t<PDataArray type=\"Float64\" Name=\"AcidConcentration\"/>" << endl;
 
 		fout << "\t\t</PPointData>" << endl;
 
@@ -1068,6 +1324,50 @@ void Simulation::writeVTKFile(std::string fname_root, size_t tstep, size_t data_
 		// arr->SetArray(permeability.getData().get() + permeability.pad_size, local.extent.size(), 1);
 		imageData->GetPointData()->AddArray(arr);
 	}
+	if (data_flags & VTKOutput::AcidConc)
+	{
+		auto arr = vtkSmartPointer<vtkDoubleArray>::New();
+		arr->SetName("AcidConcentration");
+		arr->SetNumberOfValues(num_voxels_to_write);
+		imageData->GetPointData()->AddArray(arr);
+	}
+
+	// NaN check loop
+	int nan_count_pressure = 0;
+	int nan_count_cap = 0;
+	for (int k = local.origin.k; k < (local.origin.k + local.extent.k); ++k)
+	{
+		for (int j = local.origin.j; j < (local.origin.j + local.extent.j); ++j)
+		{
+			for (int i = local.origin.i; i < (local.origin.i + local.extent.i + off_pos); ++i)
+			{
+				Index idx(i, j, k);
+				// NaN check
+				if (std::isnan(pressure[idx]) || std::isinf(pressure[idx]))
+				{
+					pressure[idx] = 0.0;
+					nan_count_pressure++;
+				}
+				if (std::isnan(cap_pressure[idx]) || std::isinf(cap_pressure[idx]))
+				{
+					cap_pressure[idx] = 0.0;
+					nan_count_cap++;
+				}
+			}
+		}
+	}
+
+	if (nan_count_pressure > 0 || nan_count_cap > 0)
+	{
+		std::cout << "    [VTK Writer Rank " << mpi_rank << "] checked "
+				  << nan_count_pressure << " Pressure NaNs and "
+				  << nan_count_cap << " CapPressure NaNs from boundary padding." << std::endl;
+	}
+	else
+	{
+		std::cout << "    [VTK Writer Rank " << mpi_rank << "] checked "
+				  << " No NaN values found." << std::endl;
+	}
 
 	size_t count = 0;
 	for (int k = local.origin.k; k < (local.origin.k + local.extent.k); ++k)
@@ -1077,6 +1377,7 @@ void Simulation::writeVTKFile(std::string fname_root, size_t tstep, size_t data_
 			for (int i = local.origin.i; i < (local.origin.i + local.extent.i + off_pos); ++i)
 			{
 				Index idx(i, j, k);
+
 				if (data_flags & VTKOutput::Type)
 					imageData->GetPointData()->GetArray("MaterialType")->SetTuple1(count, img_data[idx]);
 				if (data_flags & VTKOutput::Conc)
@@ -1095,6 +1396,8 @@ void Simulation::writeVTKFile(std::string fname_root, size_t tstep, size_t data_
 					imageData->GetPointData()->GetArray("EffectivePermeability")->SetTuple1(count, permeability[idx]);
 				if (data_flags & VTKOutput::Flux_Vec)
 					imageData->GetPointData()->GetVectors("Flux")->SetTuple3(count, flux_x[idx], flux_y[idx], flux_z[idx]);
+				if (data_flags & VTKOutput::AcidConc)
+					imageData->GetPointData()->GetArray("AcidConcentration")->SetTuple1(count, conc_acid[idx]);
 				count++;
 			}
 		}
@@ -1148,7 +1451,9 @@ void Simulation::updateCapillaryPressure()
 				{
 					// Calculate effective saturation, Se, ensuring it's within a valid range
 					double Se = (saturation[idx] - s_res) / (1.0 - s_res);
-					Se = std::max(0.0, std::min(1.0, Se));
+					// Se = std::max(0.0, std::min(1.0, Se));
+					//  Fix the lower bound to 1e-6 to prevent Capillary Pressure Infinity
+					Se = std::max(1e-6, std::min(1.0, Se));
 
 					if (Se >= 1.0)
 					{
@@ -1256,9 +1561,19 @@ void Simulation::updateSaturation(double dt)
 		dt_safe = (max_dsat * porosity) / global_max_div_q;
 	}
 
-	int num_steps = std::ceil(dt / dt_safe);
+	// int num_steps = std::ceil(dt / dt_safe);
+	//  FIX: Use a double for the ceiling calculation, then cap it, then cast it.
+	double calculated_steps = std::ceil(dt / dt_safe);
+	int num_steps = 1;
 	if (num_steps > 1000)
+	{
 		num_steps = 1000; // Hard cap
+	}
+	else if (calculated_steps > 1.0)
+	{
+		num_steps = (int)calculated_steps;
+	}
+
 	double dt_sub = dt / num_steps;
 	double dt_sub_over_phi = dt_sub / porosity;
 

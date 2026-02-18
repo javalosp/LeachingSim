@@ -24,39 +24,8 @@ cat $PBS_NODEFILE
 # D  = 1e-9 m^2/s
 # Stability limit: dt < dx^2 / (2*D) = 5.0s. We use dt=1.0s.
 
-# Run MPI with error redirection
-# 2>&1 redirects stderr (2) to stdout (1), so both go into the log file.
-#mpiexec -n 10 --oversubscribe ./release/LeachingSim_uint8 \
-#       --raw-file synthetic_test_input.raw \
-#       --xext 50 \
-#       --yext 50 \
-#       --zext 50 \
-#       --dt 1.0 \
-#       --tmax 100000.0 \
-#       --nout 1000 \
-#       --D 1.0e-9 \
-#       --kreac 1.0e-5 \
-#       --voxel_size 1.0e-4 \
-#       --out_dir ./short_test_output \
-#       > [cite_start]short_test.log 2>&1 [cite: 1, 2, 3]
-
-#mpiexec -n 10 --oversubscribe ./release/LeachingSim_uint8 \
-#       --raw-file synthetic_test_input.raw \
-#       --xext 50 \
-#       --yext 50 \
-#       --zext 50 \
-#       --theta 1.0 \
-#       --dt 86400.0 \
-#       --tmax 2592000.0 \
-#       --nout 1 \
-#       --D 1.0e-9 \
-#       --kreac 1.0e-5 \
-#       --voxel_size 1.0e-4 \
-#       --out_dir ./large_timestep_test_output \
-#       > large_timestep_test.log 2>&1
-
 mpiexec -n 10 --oversubscribe ./release/LeachingSim_uint8 \
-       --raw-file synthetic_test_input.raw \
+       --raw-file channel_test_input.raw \
        --xext 50 \
        --yext 50 \
        --zext 50 \
@@ -68,5 +37,5 @@ mpiexec -n 10 --oversubscribe ./release/LeachingSim_uint8 \
        --D 1.0 \
        --kreac 1.0e-4 \
        --voxel_size 1.0 \
-       --out_dir ./non-physical_large_timestep_test_output \
-       > non-physical-large_timestep_test.log 2>&1
+       --out_dir ./channel_large_timestep_test_output \
+       > channel-large_timestep_test.log 2>&1

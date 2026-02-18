@@ -31,7 +31,7 @@ module load VTK/9.3.0-foss-2023a
 # Diagnostics
 echo "----------------------------------------"
 echo "Environment Loaded:"
-module list
+#module list # Use this just for inspection if necessary
 echo "----------------------------------------"
 echo "Checking compiler..."
 which mpicxx

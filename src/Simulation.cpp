@@ -99,6 +99,7 @@ void Simulation::setupDomain(int3 gextent)
 	saturation.setup(local.origin, local.extent);
 	rel_permeability.setup(local.origin, local.extent);
 	cap_pressure.setup(local.origin, local.extent);
+	precipitate_inventory.setup(local.origin, local.extent);
 }
 
 /**
@@ -168,6 +169,7 @@ void Simulation::initFields()
 		saturation.getData()[i] = 0.0;
 		cap_pressure.getData()[i] = 0.0;
 		rel_permeability.getData()[i] = 0.0;
+		precipitate_inventory.getData()[i] = 0.0;
 	}
 }
 
@@ -180,6 +182,122 @@ void Simulation::initProperties()
 {
 	const double pore_permeability = 1.0e-9;
 	const double rock_permeability = 1.0e-18;
+
+	for (int k = local.origin.k; k < (local.origin.k + local.extent.k); ++k)
+	{
+		for (int j = local.origin.j; j < (local.origin.j + local.extent.j); ++j)
+		{
+			for (int i = local.origin.i; i < (local.origin.i + local.extent.i); ++i)
+			{
+				Index idx(i, j, k);
+				RAWType type = img_data[idx];
+
+				double K_intrinsic = rock_permeability; // Default for solid Rock
+
+				double log_k_rock = std::log10(rock_permeability);
+				double log_k_pore = std::log10(pore_permeability);
+
+				if (type == Air)
+				{
+					K_intrinsic = pore_permeability;
+				}
+				else if (type == Pore)
+				{
+					// Dynamic Clogging due to Precipitation
+					double p_frac = precipitate_inventory[idx];
+
+					// Clamp between 0.0 (clean) and 1.0 (fully clogged) for safety
+					p_frac = std::max(0.0, std::min(1.0, p_frac));
+
+					// As precipitate fills the pore (p_frac -> 1.0), K drops to rock level
+					double log_k_eff = (p_frac * log_k_rock) + ((1.0 - p_frac) * log_k_pore);
+					K_intrinsic = std::pow(10.0, log_k_eff);
+				}
+				else if (type >= Sulphide)
+				{
+					double f = frac[idx];
+
+					// As rock dissolves (f -> 0.0), K rises to pore level
+					double log_k_eff = (f * log_k_rock) + ((1.0 - f) * log_k_pore);
+					K_intrinsic = std::pow(10.0, log_k_eff);
+				}
+
+				// Set dynamic viscosity based on material
+				if (type == Air)
+				{
+					viscosity[idx] = 1.8e-5;
+				}
+				else
+				{
+					viscosity[idx] = 1.0e-3;
+				}
+
+				// Apply multiphase relative permeability scaling
+				double K_rel = std::max(rel_permeability[idx], 1e-15);
+				permeability[idx] = K_intrinsic * K_rel;
+			}
+		}
+	}
+}
+
+/*
+void Simulation::initProperties()
+{
+	const double pore_permeability = 1.0e-9;  // High permeability for open channels
+	const double rock_permeability = 1.0e-18; // Practically impermeable solid rock
+
+	for (int k = local.origin.k; k < (local.origin.k + local.extent.k); ++k)
+	{
+		for (int j = local.origin.j; j < (local.origin.j + local.extent.j); ++j)
+		{
+			for (int i = local.origin.i; i < (local.origin.i + local.extent.i); ++i)
+			{
+				Index idx(i, j, k);
+				RAWType type = img_data[idx];
+
+				// Determine Intrinsic Permeability dynamically
+				double K_intrinsic = rock_permeability; // Default to dense rock
+
+				if (type == Pore || type == Air)
+				{
+					K_intrinsic = pore_permeability;
+				}
+				else if (type >= Sulphide)
+				{
+					// Get the remaining solid fraction (1.0 = solid, 0.0 = completely dissolved)
+					double f = frac[idx];
+
+					// Log-Linear Interpolation for smooth physical transition
+					double log_k_rock = std::log10(rock_permeability);
+					double log_k_pore = std::log10(pore_permeability);
+
+					double log_k_eff = (f * log_k_rock) + ((1.0 - f) * log_k_pore);
+					K_intrinsic = std::pow(10.0, log_k_eff);
+				}
+
+				// 2. Set dynamic viscosity based on material
+				if (type == Air)
+				{
+					viscosity[idx] = 1.8e-5; // Air viscosity
+				}
+				else
+				{
+					viscosity[idx] = 1.0e-3; // Water/Acid viscosity
+				}
+
+				// 3. Apply multiphase relative permeability scaling
+				// (Assuming rel_permeability was initialized correctly in updateRelativePermeability)
+				permeability[idx] = K_intrinsic * rel_permeability[idx];
+			}
+		}
+	}
+}
+*/
+/*
+ void Simulation::initProperties()
+{
+	const double pore_permeability = 1.0e-9;
+	const double rock_permeability = 1.0e-18;
 	const double fluid_viscosity = 1.0e-3;
 	// const double air_viscosity = 1.0e-5;
 
@@ -188,30 +306,29 @@ void Simulation::initProperties()
 		for (int j = local.origin.j; j < (local.origin.j + local.extent.j); ++j)
 			for (int i = local.origin.i; i < (local.origin.i + local.extent.i); ++i)
 			{
-				/*
-				Index idx(i, j, k);
-				RAWType voxel_type = img_data[idx];
-				switch (voxel_type)
-				{
-				case Pore:
-					permeability[idx] = pore_permeability;
-					viscosity[idx] = fluid_viscosity;
-					break;
-				case Rock:
-					permeability[idx] = rock_permeability;
-					viscosity[idx] = fluid_viscosity;
-					break;
-				case Sulphide:
-					permeability[idx] = rock_permeability;
-					viscosity[idx] = fluid_viscosity;
-					break;
-				case Air:
-				default:
-					permeability[idx] = 0.0;
-					viscosity[idx] = 0.0;
-					break;
-				}
-					*/
+
+				// Index idx(i, j, k);
+				// RAWType voxel_type = img_data[idx];
+				// switch (voxel_type)
+				// {
+				// case Pore:
+				// 	permeability[idx] = pore_permeability;
+				// 	viscosity[idx] = fluid_viscosity;
+				// 	break;
+				// case Rock:
+				// 	permeability[idx] = rock_permeability;
+				// 	viscosity[idx] = fluid_viscosity;
+				// 	break;
+				// case Sulphide:
+				// 	permeability[idx] = rock_permeability;
+				// 	viscosity[idx] = fluid_viscosity;
+				// 	break;
+				// case Air:
+				// default:
+				// 	permeability[idx] = 0.0;
+				// 	viscosity[idx] = 0.0;
+				// 	break;
+				// }
 
 				Index idx(i, j, k);
 				RAWType voxel_type = img_data[idx];
@@ -237,6 +354,7 @@ void Simulation::initProperties()
 				viscosity[idx] = fluid_viscosity;
 			}
 }
+*/
 
 /**
  * @brief Initialises the fraction of reactive material in each voxel.
@@ -310,6 +428,8 @@ int Simulation::updateFrac(double dt)
 							double k_eff = 1.0 / ((1.0 / k_trans) + (1.0 / kreac));
 							// double driving_force = std::max(0.0, c_sat - conc[neighbor_idx]);
 							double driving_force = conc_acid[neighbor_idx];
+							// For testing purposes set driving_force to 1
+							// double driving_force = 1.0;
 							return k_eff * driving_force;
 						}
 						return 0.0;
@@ -433,12 +553,19 @@ int Simulation::updateFrac(double dt)
 						// ==========================================
 
 						// Check if voxel has fully dissolved
-						if (frac[idx] <= 0.0)
+						// if (frac[idx] <= 0.0)
+						// Set a leaching threshold
+						if (frac[idx] <= 1e-4)
 						{
 							frac[idx] = 0.0;
-							img_data[idx] = (RAWType)Pore;
-							conc[idx] = c_sat; // Instant saturation in the newly formed pore
-							leached_locally++;
+							if (img_data[idx] == Sulphide)
+							{
+								img_data[idx] = (RAWType)Pore;
+								// Ensure the new pore starts clean
+								precipitate_inventory[idx] = 0.0;
+								conc[idx] = c_sat; // Instant saturation in the newly formed pore
+								leached_locally++;
+							}
 						}
 					}
 				}
@@ -1516,7 +1643,7 @@ void Simulation::updateRelativePermeability()
  */
 void Simulation::updateSaturation(double dt)
 {
-	const double porosity = 0.1; // This should ideally be a configurable parameter
+	// const double porosity = 0.1; // This should ideally be a configurable parameter
 
 	// 1. Calculate maximum divergence of flux to determine safe sub-steps
 	double max_div_q = 0.0;
@@ -1762,6 +1889,7 @@ void Simulation::handleSurfaceEffects()
  * precipitation by changing the material type from Pore to Rock and resetting the
  * local concentration to the saturation limit.
  */
+
 void Simulation::handlePrecipitation()
 {
 	for (int k = local.origin.k; k < (local.origin.k + local.extent.k); ++k)
@@ -1772,11 +1900,34 @@ void Simulation::handlePrecipitation()
 			{
 				Index idx(i, j, k);
 
-				// Check for supersaturation only in pore voxels
 				if (img_data[idx] == Pore && conc[idx] > c_sat)
 				{
-					// Clog the pore with precipitate
-					img_data[idx] = (RAWType)Rock;
+					// Calculate excess concentration (kg/m^3 of fluid)
+					double excess_conc = conc[idx] - c_sat;
+
+					if (use_instant_precipitation)
+					{
+						img_data[idx] = Rock;
+					}
+					else
+					{
+						// Convert excess concentration to solid volume.
+						// mass = conc * (voxel_volume * porosity * saturation)
+						// solid_volume = mass / solid_density
+						// For simplicity, tracking it as a volume fraction [0.0 to 1.0]:
+
+						double fluid_vol_fraction = porosity * saturation[idx];
+						double precipitated_vol_fraction = (excess_conc * fluid_vol_fraction) / solid_density;
+
+						precipitate_inventory[idx] += precipitated_vol_fraction;
+
+						// If the pore is more than 90% full of solid, blind it.
+						double critical_limit = 0.90;
+						if (precipitate_inventory[idx] > critical_limit)
+						{
+							img_data[idx] = Rock;
+						}
+					}
 
 					// Reset the local concentration to the saturation limit
 					conc[idx] = c_sat;

@@ -36,7 +36,7 @@ int main(int argc, char *argv[])
 
 		// Command line argument parsing
 		opts::options_description cmd_opts("Command line arguments");
-		cmd_opts.add_options()("help,h", "Print this message and exit.")("raw-file", opts::value<string>()->required(), "Input RAW file specifying the domain.")("xext", opts::value<int>()->required(), "The x extent of the domain")("yext", opts::value<int>()->required(), "The y extent of the domain")("zext", opts::value<int>()->required(), "The z extent of the domain")("out_dir", opts::value<string>()->default_value("./output"), "The output directory")("header_size", opts::value<size_t>()->default_value(0), "RAW file header size in bytes.")("voxel_size", opts::value<double>()->default_value(1.), "Size of voxels (m).")("D", opts::value<double>()->default_value(1.), "Diffusion constant (m^2/s).")("kext", opts::value<double>()->default_value(1.), "Mass transfer to exterior.")("kreac", opts::value<double>()->default_value(1.), "Reaction transfer from sulphide grains.")("Dpore_fac", opts::value<double>()->default_value(1.), "Pore diffusivity enhancement factor")("dt", opts::value<double>()->default_value(1.), "Simulation time step (s).")("tmax", opts::value<double>()->default_value(10.), "Maximum simulation time (s).")("nout", opts::value<int>()->default_value(1), "Output every N-th time step.")("seed", opts::value<size_t>()->default_value(42), "Pseudo-RNG seed value.")("csat", opts::value<double>()->default_value(0.95), "Saturation concentration limit.")("evap_flux", opts::value<double>()->default_value(1e-7), "Evaporative flux (m/s)")("theta", opts::value<double>()->default_value(1.0), "Time scheme (0=Explicit, 0.5=Crank-Nicolson, 1.0=Implicit)");
+		cmd_opts.add_options()("help,h", "Print this message and exit.")("raw-file", opts::value<string>()->required(), "Input RAW file specifying the domain.")("xext", opts::value<int>()->required(), "The x extent of the domain")("yext", opts::value<int>()->required(), "The y extent of the domain")("zext", opts::value<int>()->required(), "The z extent of the domain")("out_dir", opts::value<string>()->default_value("./output"), "The output directory")("header_size", opts::value<size_t>()->default_value(0), "RAW file header size in bytes.")("voxel_size", opts::value<double>()->default_value(1.), "Size of voxels (m).")("D", opts::value<double>()->default_value(1.), "Diffusion constant (m^2/s).")("kext", opts::value<double>()->default_value(1.), "Mass transfer to exterior.")("kreac", opts::value<double>()->default_value(1.), "Reaction transfer from sulphide grains.")("Dpore_fac", opts::value<double>()->default_value(1.), "Pore diffusivity enhancement factor")("dt", opts::value<double>()->default_value(1.), "Simulation time step (s).")("tmax", opts::value<double>()->default_value(10.), "Maximum simulation time (s).")("nout", opts::value<int>()->default_value(1), "Output every N-th time step.")("seed", opts::value<size_t>()->default_value(42), "Pseudo-RNG seed value.")("csat", opts::value<double>()->default_value(0.95), "Saturation concentration limit.")("evap_flux", opts::value<double>()->default_value(1e-7), "Evaporative flux (m/s)")("theta", opts::value<double>()->default_value(1.0), "Time scheme (0=Explicit, 0.5=Crank-Nicolson, 1.0=Implicit)")("instant_precip", opts::value<bool>()->default_value(false), "Enable instant pore blinding upon supersaturation")("porosity", opts::value<double>()->default_value(0.1), "Material porosity");
 
 		opts::variables_map cmd;
 		opts::store(opts::parse_command_line(argc, argv, cmd_opts), cmd);
@@ -61,6 +61,8 @@ int main(int argc, char *argv[])
 		the_simulation.c_sat = cmd["csat"].as<double>();
 		the_simulation.evaporative_flux = cmd["evap_flux"].as<double>();
 		the_simulation.theta = cmd["theta"].as<double>();
+		the_simulation.use_instant_precipitation = cmd["instant_precip"].as<bool>();
+		the_simulation.porosity = cmd["porosity"].as<double>();
 
 		// Initialise some constants
 		the_simulation.vg_n = 2.0; // Must be strictly > 1.0
@@ -146,9 +148,32 @@ int main(int argc, char *argv[])
 		// Main Simulation Loop
 		double t = 0.0;
 		size_t n = 0;
-		// double dt = cmd["dt"].as<double>(); // REMOVED: Redundant variable that caused bugs
+
 		double tmax = cmd["tmax"].as<double>();
 		int nout = cmd["nout"].as<int>();
+
+		// PARAMETER VERIFICATION LOG
+		if (mpi_rank == 0)
+		{
+			std::cout << "\n======================================" << std::endl;
+			std::cout << "  SIMULATION PARAMETERS" << std::endl;
+			std::cout << "========================================" << std::endl;
+			std::cout << "  Input file                       : " << cmd["raw-file"].as<string>() << std::endl;
+			std::cout << "  Output folder                    : " << out_dir << std::endl;
+			std::cout << "  Voxel size (dx)                  : " << the_simulation.dx << " m" << std::endl;
+			std::cout << "  File size in voxels (x, y, z)    : " << "(" << cmd["zext"].as<int>() << ")" << "(" << cmd["yext"].as<int>() << ")" << "(" << cmd["zext"].as<int>() << ")" << std::endl;
+			std::cout << "  Porosity                         : " << the_simulation.porosity << std::endl;
+			std::cout << "  Diffusion (D)                    : " << the_simulation.D << std::endl;
+			std::cout << "  Reaction rate (kreac)            : " << the_simulation.kreac << std::endl;
+			std::cout << "  Saturation limit (csat)          : " << the_simulation.c_sat << std::endl;
+			std::cout << "  Evaporative flux                 : " << the_simulation.evaporative_flux << std::endl;
+			std::cout << "  Time step (dt)                   : " << dt_user << " s" << std::endl;
+			std::cout << "  Time discretisation (Theta)      : " << the_simulation.theta << std::endl;
+			std::cout << "  Precipitation mode               : " << (the_simulation.use_instant_precipitation ? "True (Instant)" : "False (Gradual)") << std::endl;
+			std::cout << "==================================================\n"
+					  << std::endl;
+		}
+		// =====================================================================
 
 		if (mpi_rank == 0)
 		{
@@ -180,6 +205,14 @@ int main(int argc, char *argv[])
 			the_simulation.conc_acid.exchangePadding(MPI_DOUBLE);
 
 			the_simulation.handlePrecipitation();
+
+// If precipitation alters the rock matrix, tell the neighbours
+// the_simulation.img_data.exchangePadding(MPI_DOUBLE);
+#if DATA_TYPE == 16
+			the_simulation.img_data.exchangePadding(MPI_UNSIGNED_SHORT);
+#elif DATA_TYPE == 8
+			the_simulation.img_data.exchangePadding(MPI_UNSIGNED_CHAR);
+#endif
 
 			// UPDATED: Pass dt_actual instead of unsafe dt
 			int leached_this_step = the_simulation.updateFrac(dt_actual);

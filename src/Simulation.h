@@ -82,6 +82,9 @@ public:
 	double vg_alpha; // van Genuchten alpha parameter (1/m)
 	double vg_n;	 // van Genuchten n parameter ()
 	double s_res;	 // Residual saturation ()
+	bool use_instant_precipitation;
+	double solid_density; // Density of the precipitate
+	double porosity;
 
 	// Public Data Fields
 	// Input & Material Properties
@@ -100,6 +103,7 @@ public:
 	MPIDomain<double, 1, IDX_SCHEME> saturation;
 	MPIDomain<double, 1, IDX_SCHEME> cap_pressure;
 	MPIDomain<double, 1, IDX_SCHEME> rel_permeability;
+	MPIDomain<double, 1, IDX_SCHEME> precipitate_inventory; // Tracks solid volume fraction
 
 	friend std::ostream &operator<<(std::ostream &, const Simulation &);
 

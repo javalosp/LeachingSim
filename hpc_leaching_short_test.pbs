@@ -46,5 +46,7 @@ mpiexec -n 10 --oversubscribe ./release/LeachingSim_uint8 \
        --D 1.0 \
        --kreac 1.0e-4 \
        --voxel_size 1.0 \
-       --out_dir ./channel_large_timestep_test_output \
-       > channel-large_timestep_test.log 2>&1
+       --top_pressure 100000 \
+       --evap_flux 0.0 \
+       --out_dir ./leaching_test_output \
+       > leaching_test.log 2>&1

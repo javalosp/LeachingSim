@@ -36,7 +36,16 @@ int main(int argc, char *argv[])
 
 		// Command line argument parsing
 		opts::options_description cmd_opts("Command line arguments");
-		cmd_opts.add_options()("help,h", "Print this message and exit.")("raw-file", opts::value<string>()->required(), "Input RAW file specifying the domain.")("xext", opts::value<int>()->required(), "The x extent of the domain")("yext", opts::value<int>()->required(), "The y extent of the domain")("zext", opts::value<int>()->required(), "The z extent of the domain")("out_dir", opts::value<string>()->default_value("./output"), "The output directory")("header_size", opts::value<size_t>()->default_value(0), "RAW file header size in bytes.")("voxel_size", opts::value<double>()->default_value(1.), "Size of voxels (m).")("D", opts::value<double>()->default_value(1.), "Diffusion constant (m^2/s).")("kext", opts::value<double>()->default_value(1.), "Mass transfer to exterior.")("kreac", opts::value<double>()->default_value(1.), "Reaction transfer from sulphide grains.")("Dpore_fac", opts::value<double>()->default_value(1.), "Pore diffusivity enhancement factor")("dt", opts::value<double>()->default_value(1.), "Simulation time step (s).")("tmax", opts::value<double>()->default_value(10.), "Maximum simulation time (s).")("nout", opts::value<int>()->default_value(1), "Output every N-th time step.")("seed", opts::value<size_t>()->default_value(42), "Pseudo-RNG seed value.")("csat", opts::value<double>()->default_value(0.95), "Saturation concentration limit.")("evap_flux", opts::value<double>()->default_value(1e-7), "Evaporative flux (m/s)")("theta", opts::value<double>()->default_value(1.0), "Time scheme (0=Explicit, 0.5=Crank-Nicolson, 1.0=Implicit)")("instant_precip", opts::value<bool>()->default_value(false), "Enable instant pore blinding upon supersaturation")("porosity", opts::value<double>()->default_value(0.1), "Material porosity");
+		cmd_opts.add_options()("help,h", "Print this message and exit.")("raw-file", opts::value<string>()->required(), "Input RAW file specifying the domain.")("xext", opts::value<int>()->required(), "The x extent of the domain")("yext", opts::value<int>()->required(), "The y extent of the domain")("zext", opts::value<int>()->required(), "The z extent of the domain")("out_dir", opts::value<string>()->default_value("./output"), "The output directory")("header_size", opts::value<size_t>()->default_value(0), "RAW file header size in bytes.")("voxel_size", opts::value<double>()->default_value(1.), "Size of voxels (m).")("D", opts::value<double>()->default_value(1.), "Diffusion constant (m^2/s).")("kext", opts::value<double>()->default_value(1.), "Mass transfer to exterior.")("kreac", opts::value<double>()->default_value(1.), "Reaction transfer from sulphide grains.")("Dpore_fac", opts::value<double>()->default_value(1.), "Pore diffusivity enhancement factor")("dt", opts::value<double>()->default_value(1.), "Simulation time step (s).")("tmax", opts::value<double>()->default_value(10.), "Maximum simulation time (s).")("nout", opts::value<int>()->default_value(1), "Output every N-th time step.")("seed", opts::value<size_t>()->default_value(42), "Pseudo-RNG seed value.")("csat", opts::value<double>()->default_value(0.95), "Saturation concentration limit.")("evap_flux", opts::value<double>()->default_value(0.0), "Evaporative flux (m/s)")("theta", opts::value<double>()->default_value(1.0), "Time scheme (0=Explicit, 0.5=Crank-Nicolson, 1.0=Implicit)")("instant_precip", opts::value<bool>()->default_value(false), "Enable instant pore blinding upon supersaturation")("porosity", opts::value<double>()->default_value(0.1), "Material porosity")("top_pressure", opts::value<double>()->default_value(10000.0), "Applied pressure head at the top boundary (Pa, simulates irrigation)");
+		/* Simluation cases can vary depending on some options values, e.g.
+		Leaching case
+			./LeachingSim --top_pressure 10000.0 --evap_flux 0.0 ...
+			The material is "irrigated" keeping it wet. Evaporation is negligible.
+		Drying case
+			./LeachingSim --top_pressure 0.0 --evap_flux 1.0e-6 ...
+			There is no downward push.
+			Evaporation pulls liquid volume out of the surface-connected pores and surface pores are converted into solid
+		*/
 
 		opts::variables_map cmd;
 		opts::store(opts::parse_command_line(argc, argv, cmd_opts), cmd);
@@ -60,6 +69,7 @@ int main(int argc, char *argv[])
 		the_simulation.Dpore_fac = cmd["Dpore_fac"].as<double>();
 		the_simulation.c_sat = cmd["csat"].as<double>();
 		the_simulation.evaporative_flux = cmd["evap_flux"].as<double>();
+		the_simulation.top_pressure = cmd["top_pressure"].as<double>();
 		the_simulation.theta = cmd["theta"].as<double>();
 		the_simulation.use_instant_precipitation = cmd["instant_precip"].as<bool>();
 		the_simulation.porosity = cmd["porosity"].as<double>();
@@ -166,6 +176,7 @@ int main(int argc, char *argv[])
 			std::cout << "  Diffusion (D)                    : " << the_simulation.D << std::endl;
 			std::cout << "  Reaction rate (kreac)            : " << the_simulation.kreac << std::endl;
 			std::cout << "  Saturation limit (csat)          : " << the_simulation.c_sat << std::endl;
+			std::cout << "  Top Pressure (Irrigation)        : " << the_simulation.top_pressure << " Pa" << std::endl;
 			std::cout << "  Evaporative flux                 : " << the_simulation.evaporative_flux << std::endl;
 			std::cout << "  Time step (dt)                   : " << dt_user << " s" << std::endl;
 			std::cout << "  Time discretisation (Theta)      : " << the_simulation.theta << std::endl;
@@ -185,6 +196,8 @@ int main(int argc, char *argv[])
 			if (mpi_rank == 0)
 				cout << "\nIteration: " << n << " | Time: " << t << "s" << endl;
 
+			// 1. Hydrodynamics
+			// ==========================================
 			the_simulation.setupPressureEqns();
 			the_simulation.solvePressure();
 			the_simulation.pressure.exchangePadding(MPI_DOUBLE);
@@ -198,12 +211,27 @@ int main(int argc, char *argv[])
 			the_simulation.flux_y.exchangePadding(MPI_DOUBLE);
 			the_simulation.flux_z.exchangePadding(MPI_DOUBLE);
 
+			// ==========================================
+			// 2. Dissolved Mineral Transport (conc)
+			// Inlet = 0.0 (clean liquid), Sulphide = 1.0 (source)
+			// ==========================================
 			// UPDATED: Pass dt_actual instead of unsafe dt
-			the_simulation.setupConcentrationEqns(dt_actual);
+			// the_simulation.setupConcentrationEqns(dt_actual);
+			the_simulation.setupConcentrationEqns(dt_actual, the_simulation.conc, 0.0, 1.0);
 			the_simulation.solveConc();
 			the_simulation.conc.exchangePadding(MPI_DOUBLE);
+
+			// ==========================================
+			// 3. Acid Transport (conc_acid)
+			// Inlet = 1.0 (fresh acid), Sulphide = 0.0 (acid consumed)
+			// ==========================================
+			the_simulation.setupConcentrationEqns(dt_actual, the_simulation.conc_acid, 1.0, 0.0);
+			the_simulation.solveAcid();
 			the_simulation.conc_acid.exchangePadding(MPI_DOUBLE);
 
+			// ==========================================
+			// 4. Reactions & Precipitation
+			// ==========================================
 			the_simulation.handlePrecipitation();
 
 // If precipitation alters the rock matrix, tell the neighbours

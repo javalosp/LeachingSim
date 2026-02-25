@@ -54,16 +54,16 @@ elif case == 1:
 
     # Create a central vertical Sulphide vein connecting the top and bottom
     # Vein is 6x6 voxels thick, running straight down
-    data[2:48, 20:30, 20:30] = SULPHIDE
+    data[2:48, 22:28, 22:28] = SULPHIDE
 
     ## Add a tiny "Pore" notch at the very top of the vein to allow the first drop of acid in
     #data[2:3, 24:26, 24:26] = PORE 
     # Add a tiny "Pore" channel inside the sulphide
-    data[:, 22:28, 22:28] = PORE 
+    data[:, 24:26, 24:26] = PORE 
 
     # Create Air boundaries at Top (Inlet) and Bottom (Outlet)
-    data[0:4, :, :] = AIR
-    data[46:50, :, :] = AIR
+    data[0:2, :, :] = AIR
+    data[48:50, :, :] = AIR
 
     # Save to binary file
     data.tofile("channel_test_input.raw")

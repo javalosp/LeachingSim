@@ -846,7 +846,8 @@ void Simulation::setupPressureEqns()
 						// This guarantees the high pressure actually touches the porous rock.
 						if (i < global.extent.i / 2)
 						{
-							VecSetValue(sources_vec, arridx, 10000.0, ADD_VALUES);
+							// VecSetValue(sources_vec, arridx, 10000.0, ADD_VALUES);
+							VecSetValue(sources_vec, arridx, top_pressure, ADD_VALUES);
 						}
 						else
 						{
@@ -1044,19 +1045,24 @@ void Simulation::calculateFlux()
 			for (int i = local.origin.i; i < (local.origin.i + local.extent.i); ++i)
 			{
 				Index idx(i, j, k);
-				double gradP_x, gradP_y, gradP_z;
+				double gradP_x, gradP_y, gradP_z;	 // global pressure gradients
+				double gradPc_x, gradPc_y, gradPc_z; // capillary pressure gradients
+
+				// Calculate global pressure gradients
 				if (i == local.origin.i)
 					gradP_x = (pressure[Index(i + 1, j, k)] - pressure[idx]) / dx;
 				else if (i == local.origin.i + local.extent.i - 1)
 					gradP_x = (pressure[idx] - pressure[Index(i - 1, j, k)]) / dx;
 				else
 					gradP_x = (pressure[Index(i + 1, j, k)] - pressure[Index(i - 1, j, k)]) / (2.0 * dx);
+
 				if (j == local.origin.j)
 					gradP_y = (pressure[Index(i, j + 1, k)] - pressure[idx]) / dx;
 				else if (j == local.origin.j + local.extent.j - 1)
 					gradP_y = (pressure[idx] - pressure[Index(i, j - 1, k)]) / dx;
 				else
 					gradP_y = (pressure[Index(i, j + 1, k)] - pressure[Index(i, j - 1, k)]) / (2.0 * dx);
+
 				if (k == local.origin.k)
 					gradP_z = (pressure[Index(i, j, k + 1)] - pressure[idx]) / dx;
 				else if (k == local.origin.k + local.extent.k - 1)
@@ -1064,26 +1070,47 @@ void Simulation::calculateFlux()
 				else
 					gradP_z = (pressure[Index(i, j, k + 1)] - pressure[Index(i, j, k - 1)]) / (2.0 * dx);
 
+				// Calculate capillary pressure gradients
+				if (i == local.origin.i)
+					gradPc_x = (cap_pressure[Index(i + 1, j, k)] - cap_pressure[idx]) / dx;
+				else if (i == local.origin.i + local.extent.i - 1)
+					gradPc_x = (cap_pressure[idx] - cap_pressure[Index(i - 1, j, k)]) / dx;
+				else
+					gradPc_x = (cap_pressure[Index(i + 1, j, k)] - cap_pressure[Index(i - 1, j, k)]) / (2.0 * dx);
+
+				if (j == local.origin.j)
+					gradPc_y = (cap_pressure[Index(i, j + 1, k)] - cap_pressure[idx]) / dx;
+				else if (j == local.origin.j + local.extent.j - 1)
+					gradPc_y = (cap_pressure[idx] - cap_pressure[Index(i, j - 1, k)]) / dx;
+				else
+					gradPc_y = (cap_pressure[Index(i, j + 1, k)] - cap_pressure[Index(i, j - 1, k)]) / (2.0 * dx);
+
+				if (k == local.origin.k)
+					gradPc_z = (cap_pressure[Index(i, j, k + 1)] - cap_pressure[idx]) / dx;
+				else if (k == local.origin.k + local.extent.k - 1)
+					gradPc_z = (cap_pressure[idx] - cap_pressure[Index(i, j, k - 1)]) / dx;
+				else
+					gradPc_z = (cap_pressure[Index(i, j, k + 1)] - cap_pressure[Index(i, j, k - 1)]) / (2.0 * dx);
+
+				// Darcy flux
 				double transmissivity = permeability[idx] / viscosity[idx];
 
 				// Calculate gravity head: rho (1000 kg/m^3) * g (9.81 m/s^2)
 				// Assuming +i direction is downwards.
 				const double rho_g = 1000.0 * 9.81;
 
+				// Liquid Pressure Gradient = gradP - gradPc
+				double liq_grad_x = gradP_x - gradPc_x;
+				double liq_grad_y = gradP_y - gradPc_y;
+				double liq_grad_z = gradP_z - gradPc_z;
+
+				// Darcy's law with gravity and capillary suction combined
 				// flux_x corresponds to the 'i' index (Z-axis, vertical flow)
 				// Darcy's law with gravity: q = -(k/mu) * (gradP - rho*g)
-				flux_x[idx] = -transmissivity * (gradP_x - rho_g);
-
-				// Horizontal flows remain driven purely by pressure
-				flux_y[idx] = -transmissivity * gradP_y;
-				flux_z[idx] = -transmissivity * gradP_z;
-
-				/*
-				double transmissivity = permeability[idx] / viscosity[idx];
-				flux_x[idx] = -transmissivity * gradP_x;
-				flux_y[idx] = -transmissivity * gradP_y;
-				flux_z[idx] = -transmissivity * gradP_z;
-				*/
+				flux_x[idx] = -transmissivity * (liq_grad_x - rho_g);
+				// Horizontal flows aren't affected by gravity
+				flux_y[idx] = -transmissivity * liq_grad_y;
+				flux_z[idx] = -transmissivity * liq_grad_z;
 			}
 }
 
@@ -1098,7 +1125,8 @@ void Simulation::calculateFlux()
  *
  * @param dt The current time step size (s), used for the time-derivative term.
  */
-void Simulation::setupConcentrationEqns(double dt)
+// void Simulation::setupConcentrationEqns(double dt)
+void Simulation::setupConcentrationEqns(double dt, MPIDomain<double, 1, IDX_SCHEME> &field, double inlet_bc, double sulphide_bc)
 {
 	MatDestroy(&coeff_mat);
 	MatCreate(PETSC_COMM_WORLD, &coeff_mat);
@@ -1124,21 +1152,24 @@ void Simulation::setupConcentrationEqns(double dt)
 				{
 					// Air boundaries (top/bottom) act as fresh water inlet or open outlet (C = 0.0)
 					MatSetValue(coeff_mat, arridx, arridx, 1.0, ADD_VALUES);
-					VecSetValue(sources_vec, arridx, 0.0, ADD_VALUES);
+					// VecSetValue(sources_vec, arridx, 0.0, ADD_VALUES);
+					VecSetValue(sources_vec, arridx, inlet_bc, ADD_VALUES);
 					continue;
 				}
 				else if (voxel_type >= Sulphide)
 				{
 					// Sulphide voxels act as a saturated source (C = 1.0)
 					MatSetValue(coeff_mat, arridx, arridx, 1.0, ADD_VALUES);
-					VecSetValue(sources_vec, arridx, 1.0, ADD_VALUES);
+					// VecSetValue(sources_vec, arridx, 1.0, ADD_VALUES);
+					VecSetValue(sources_vec, arridx, sulphide_bc, ADD_VALUES);
 					continue;
 				}
 				else if (voxel_type == Rock)
 				{
 					// Rock is impermeable; it retains its current concentration
 					MatSetValue(coeff_mat, arridx, arridx, 1.0, ADD_VALUES);
-					VecSetValue(sources_vec, arridx, conc[idx], ADD_VALUES);
+					// VecSetValue(sources_vec, arridx, conc[idx], ADD_VALUES);
+					VecSetValue(sources_vec, arridx, field[idx], ADD_VALUES);
 					continue;
 				}
 				/*
@@ -1170,7 +1201,8 @@ void Simulation::setupConcentrationEqns(double dt)
 				}
 				*/
 				MatSetValue(coeff_mat, arridx, arridx, inv_dt, ADD_VALUES);
-				VecSetValue(sources_vec, arridx, conc[idx] * inv_dt, ADD_VALUES);
+				// VecSetValue(sources_vec, arridx, conc[idx] * inv_dt, ADD_VALUES);
+				VecSetValue(sources_vec, arridx, field[idx] * inv_dt, ADD_VALUES);
 
 				// Lambda function for setting advection and diffussion rates
 				auto set_link = [&](Index neighbor_idx, double q_face)
@@ -1198,10 +1230,12 @@ void Simulation::setupConcentrationEqns(double dt)
 
 					// Build RHS Vector b (weighted by 1.0 - theta)
 					// Mathematically: L(C^n) = -(coeff_self * C_self + coeff_neighbor * C_neighbor)
-					double old_C_self = conc[idx];
-					double old_C_neighbor = conc[neighbor_idx];
-					double explicit_rhs_term = -(coeff_self * old_C_self + coeff_neighbor * old_C_neighbor);
+					// double old_C_self = conc[idx];
+					double old_C_self = field[idx];
+					// double old_C_neighbor = conc[neighbor_idx];
+					double old_C_neighbor = field[neighbor_idx];
 
+					double explicit_rhs_term = -(coeff_self * old_C_self + coeff_neighbor * old_C_neighbor);
 					VecSetValue(sources_vec, arridx, (1.0 - theta) * explicit_rhs_term, ADD_VALUES);
 				};
 
@@ -1671,8 +1705,32 @@ void Simulation::updateSaturation(double dt)
 				double q_face_zm = neighbor_zm.valid(global) ? (flux_z[idx] + flux_z[neighbor_zm]) / 2.0 : 0.0;
 
 				double div_q = ((q_face_xp - q_face_xm) + (q_face_yp - q_face_ym) + (q_face_zp - q_face_zm)) / dx;
-				if (std::abs(div_q) > max_div_q)
-					max_div_q = std::abs(div_q);
+
+				// Calculate evaporative sink for stability check
+				double evap_sink = 0.0;
+				if (img_data[idx] == Pore)
+				{
+					int air_faces = 0;
+					if (neighbor_xp.valid(global) && img_data[neighbor_xp] == Air)
+						air_faces++;
+					if (neighbor_xm.valid(global) && img_data[neighbor_xm] == Air)
+						air_faces++;
+					if (neighbor_yp.valid(global) && img_data[neighbor_yp] == Air)
+						air_faces++;
+					if (neighbor_ym.valid(global) && img_data[neighbor_ym] == Air)
+						air_faces++;
+					if (neighbor_zp.valid(global) && img_data[neighbor_zp] == Air)
+						air_faces++;
+					if (neighbor_zm.valid(global) && img_data[neighbor_zm] == Air)
+						air_faces++;
+
+					evap_sink = (air_faces * evaporative_flux) / dx;
+				}
+
+				// The total rate of change includes both flux divergence and evaporation
+				double total_rate = std::abs(div_q) + evap_sink;
+				if (total_rate > max_div_q)
+					max_div_q = total_rate;
 			}
 		}
 	}
@@ -1747,7 +1805,29 @@ void Simulation::updateSaturation(double dt)
 
 					double div_q = ((q_face_xp - q_face_xm) + (q_face_yp - q_face_ym) + (q_face_zp - q_face_zm)) / dx;
 
-					double new_sat = saturation[idx] - dt_sub_over_phi * div_q;
+					// apply evaporative sink at boundaries
+					double evap_sink = 0.0;
+					if (img_data[idx] == Pore)
+					{
+						int air_faces = 0;
+						if (neighbor_xp.valid(global) && img_data[neighbor_xp] == Air)
+							air_faces++;
+						if (neighbor_xm.valid(global) && img_data[neighbor_xm] == Air)
+							air_faces++;
+						if (neighbor_yp.valid(global) && img_data[neighbor_yp] == Air)
+							air_faces++;
+						if (neighbor_ym.valid(global) && img_data[neighbor_ym] == Air)
+							air_faces++;
+						if (neighbor_zp.valid(global) && img_data[neighbor_zp] == Air)
+							air_faces++;
+						if (neighbor_zm.valid(global) && img_data[neighbor_zm] == Air)
+							air_faces++;
+
+						evap_sink = (air_faces * evaporative_flux) / dx;
+					}
+
+					// Update saturation using the combined sink term
+					double new_sat = saturation[idx] - dt_sub_over_phi * (div_q + evap_sink);
 
 					// Clamp the saturation to physical bounds
 					saturation_new[idx] = std::max(0.0, std::min(1.0, new_sat));
@@ -1933,6 +2013,44 @@ void Simulation::handlePrecipitation()
 					conc[idx] = c_sat;
 				}
 			}
+		}
+	}
+}
+
+void Simulation::solveAcid()
+{
+	PetscInt its;
+	KSPConvergedReason reason;
+
+	// Point the PETSc vector wrapper to the acid concentration array
+	VecPlaceArray(solution_vec, conc_acid.getData().get() + conc_acid.pad_size);
+
+	KSPReset(ksp);
+	KSPSetOperators(ksp, coeff_mat, coeff_mat);
+	KSPSolve(ksp, sources_vec, solution_vec);
+
+	// Extract min/max for logging and stability checking
+	PetscInt min_loc, max_loc;
+	PetscReal min_val, max_val;
+	VecMin(solution_vec, &min_loc, &min_val);
+	VecMax(solution_vec, &max_loc, &max_val);
+
+	// Un-link the memory
+	VecResetArray(solution_vec);
+
+	KSPGetIterationNumber(ksp, &its);
+	KSPGetConvergedReason(ksp, &reason);
+
+	if (mpi_rank == 0)
+	{
+		if (reason > 0)
+		{
+			cout << "    [Acid Transport] Converged in " << its << " iterations. (Reason Code: " << reason << ")" << endl;
+			cout << "    [Acid Transport] Min Value: " << min_val << " | Max Value: " << max_val << endl;
+		}
+		else
+		{
+			cout << "    [Acid Transport] DIVERGED/FAILED in " << its << " iterations. (Error Code: " << reason << ")" << endl;
 		}
 	}
 }

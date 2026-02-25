@@ -55,9 +55,11 @@ public:
 	// Solvers for Dynamic Model
 	void setupPressureEqns();
 	void solvePressure();
-	void setupConcentrationEqns(double dt);
+	// void setupConcentrationEqns(double dt);
+	void setupConcentrationEqns(double dt, MPIDomain<double, 1, IDX_SCHEME> &field, double inlet_bc, double sulphide_bc);
 	void solveConc();
 	void calculateFlux();
+	void solveAcid();
 
 	// Template & Helper Functions
 	template <IndexScheme S>
@@ -78,6 +80,7 @@ public:
 	double gamma_beta;
 	double c_sat;			 // Saturation concentration limit
 	double evaporative_flux; // Rate of evaporation at the air interface (m/s)
+	double top_pressure;	 // Controls the "irrigation" head
 	// van Genuchten model parameters
 	double vg_alpha; // van Genuchten alpha parameter (1/m)
 	double vg_n;	 // van Genuchten n parameter ()

@@ -963,8 +963,15 @@ void Simulation::setupPressureEqns()
 							}
 							*/
 							// Calculate average permeability and enforce the 1e-25 regularization
-							double K_avg = (permeability[idx] + K_neighbor) / 2.0;
-							K_avg = std::max(K_avg, 1e-25);
+							// double K_avg = (permeability[idx] + K_neighbor) / 2.0;
+							// K_avg = std::max(K_avg, 1e-25);
+
+							// Calculate the harmonic mean for permeability
+							double K_self = std::max(permeability[idx], 1e-25);
+							double K_neigh = std::max(K_neighbor, 1e-25);
+
+							// Harmonic mean: 2 * (K1 * K2) / (K1 + K2)
+							double K_avg = (2.0 * K_self * K_neigh) / (K_self + K_neigh);
 
 							double coeff = K_avg / viscosity[idx];
 
@@ -1091,6 +1098,18 @@ void Simulation::calculateFlux()
 					gradPc_z = (cap_pressure[idx] - cap_pressure[Index(i, j, k - 1)]) / dx;
 				else
 					gradPc_z = (cap_pressure[Index(i, j, k + 1)] - cap_pressure[Index(i, j, k - 1)]) / (2.0 * dx);
+
+				// capillary regularization (gradient clamping)
+
+				// Prevent extreme microscopic suction spikes from crashing the explicit solver.
+				// use a very strong (physically stable) suction limit, e.g. 50000 Pa/m
+				// this value is defined through command-line --max_cap_grad 50000.0
+				// lower values: fast but less accurate drying (e.g. 10000)
+				// higher values: slowt but accurate drying (e.g. 200000)
+
+				gradPc_x = std::max(-max_cap_grad, std::min(max_cap_grad, gradPc_x));
+				gradPc_y = std::max(-max_cap_grad, std::min(max_cap_grad, gradPc_y));
+				gradPc_z = std::max(-max_cap_grad, std::min(max_cap_grad, gradPc_z));
 
 				// Darcy flux
 				double transmissivity = permeability[idx] / viscosity[idx];
@@ -1845,6 +1864,181 @@ void Simulation::updateSaturation(double dt)
 		}
 	}
 }
+
+void Simulation::setupSaturationEqns(double dt)
+{
+	MatDestroy(&coeff_mat);
+	MatCreate(PETSC_COMM_WORLD, &coeff_mat);
+	MatSetSizes(coeff_mat, local.extent.size(), local.extent.size(), PETSC_DETERMINE, PETSC_DETERMINE);
+	MatSetType(coeff_mat, MATMPIAIJ);
+	MatMPIAIJSetPreallocation(coeff_mat, 8, PETSC_NULLPTR, 8, PETSC_NULLPTR);
+	MatSetOption(coeff_mat, MAT_NEW_NONZERO_ALLOCATION_ERR, PETSC_FALSE);
+	MatSetFromOptions(coeff_mat);
+	VecZeroEntries(sources_vec);
+
+	const double inv_dt = 1.0 / dt;
+
+	for (int k = local.origin.k; k < (local.origin.k + local.extent.k); ++k)
+	{
+		for (int j = local.origin.j; j < (local.origin.j + local.extent.j); ++j)
+		{
+			for (int i = local.origin.i; i < (local.origin.i + local.extent.i); ++i)
+			{
+				Index idx(i, j, k);
+				int arridx = idx.arrayId(global);
+				RAWType voxel_type = img_data[idx];
+
+				// =================================================================
+				// 1. Inactive Regions (Rock, Air, Sulphide)
+				// =================================================================
+				if (voxel_type == Air || voxel_type == Rock || voxel_type >= Sulphide)
+				{
+					// These boundaries maintain their current saturation state
+					MatSetValue(coeff_mat, arridx, arridx, 1.0, ADD_VALUES);
+					VecSetValue(sources_vec, arridx, saturation[idx], ADD_VALUES);
+					continue;
+				}
+
+				// =================================================================
+				// 2. Active Pore Regions
+				// =================================================================
+
+				// A. Calculate Evaporation Sink
+				double evap_sink = 0.0;
+				Index neighbor_xp(i + 1, j, k);
+				Index neighbor_xm(i - 1, j, k);
+				Index neighbor_yp(i, j + 1, k);
+				Index neighbor_ym(i, j - 1, k);
+				Index neighbor_zp(i, j, k + 1);
+				Index neighbor_zm(i, j, k - 1);
+
+				int air_faces = 0;
+				if (neighbor_xp.valid(global) && img_data[neighbor_xp] == Air)
+					air_faces++;
+				if (neighbor_xm.valid(global) && img_data[neighbor_xm] == Air)
+					air_faces++;
+				if (neighbor_yp.valid(global) && img_data[neighbor_yp] == Air)
+					air_faces++;
+				if (neighbor_ym.valid(global) && img_data[neighbor_ym] == Air)
+					air_faces++;
+				if (neighbor_zp.valid(global) && img_data[neighbor_zp] == Air)
+					air_faces++;
+				if (neighbor_zm.valid(global) && img_data[neighbor_zm] == Air)
+					air_faces++;
+
+				evap_sink = (air_faces * evaporative_flux) / dx;
+
+				// B. Setup Central Diagonal (phi / dt)
+				double coeff_self = porosity * inv_dt;
+				double explicit_rhs = (porosity * inv_dt * saturation[idx]) - evap_sink;
+
+				// C. Lambda for Upwinded Mobility Advection
+				auto set_link = [&](Index neighbor_idx, double q_face_outward)
+				{
+					if (neighbor_idx.valid(global))
+					{
+						if (q_face_outward > 0)
+						{
+							// Flow is leaving this cell: Upwind depends on local saturation
+							// Max limit prevents divide-by-zero on dry cells
+							double v_eff = q_face_outward / std::max(saturation[idx], 1e-6);
+							coeff_self += v_eff / dx;
+						}
+						else
+						{
+							// Flow is entering this cell: Upwind depends on neighbor saturation
+							double v_eff = q_face_outward / std::max(saturation[neighbor_idx], 1e-6);
+							// v_eff is negative, off-diagonal matrix entries for entering flux are negative
+							MatSetValue(coeff_mat, arridx, neighbor_idx.arrayId(global), v_eff / dx, ADD_VALUES);
+						}
+					}
+				};
+
+				// D. Evaluate flux on all 6 faces (Calculate OUTWARD flux specifically)
+				if (neighbor_xp.valid(global))
+					set_link(neighbor_xp, (flux_x[idx] + flux_x[neighbor_xp]) / 2.0);
+				if (neighbor_xm.valid(global))
+					set_link(neighbor_xm, -(flux_x[idx] + flux_x[neighbor_xm]) / 2.0);
+				if (neighbor_yp.valid(global))
+					set_link(neighbor_yp, (flux_y[idx] + flux_y[neighbor_yp]) / 2.0);
+				if (neighbor_ym.valid(global))
+					set_link(neighbor_ym, -(flux_y[idx] + flux_y[neighbor_ym]) / 2.0);
+				if (neighbor_zp.valid(global))
+					set_link(neighbor_zp, (flux_z[idx] + flux_z[neighbor_zp]) / 2.0);
+				if (neighbor_zm.valid(global))
+					set_link(neighbor_zm, -(flux_z[idx] + flux_z[neighbor_zm]) / 2.0);
+
+				// E. Insert local coefficients into PETSc
+				MatSetValue(coeff_mat, arridx, arridx, coeff_self, ADD_VALUES);
+				VecSetValue(sources_vec, arridx, explicit_rhs, ADD_VALUES);
+			}
+		}
+	}
+
+	MatAssemblyBegin(coeff_mat, MAT_FINAL_ASSEMBLY);
+	VecAssemblyBegin(sources_vec);
+	MatAssemblyEnd(coeff_mat, MAT_FINAL_ASSEMBLY);
+	VecAssemblyEnd(sources_vec);
+}
+
+void Simulation::solveSaturation()
+{
+	PetscInt its;
+	KSPConvergedReason reason;
+
+	// 1. Point the PETSc vector wrapper directly to the C++ Saturation array
+	VecPlaceArray(solution_vec, saturation.getData().get() + saturation.pad_size);
+
+	// 2. Execute the Implicit Matrix Solve
+	KSPReset(ksp);
+	KSPSetOperators(ksp, coeff_mat, coeff_mat);
+	KSPSolve(ksp, sources_vec, solution_vec);
+
+	// 3. Extract un-clamped Min/Max for logging
+	PetscInt min_loc, max_loc;
+	PetscReal min_val, max_val;
+	VecMin(solution_vec, &min_loc, &min_val);
+	VecMax(solution_vec, &max_loc, &max_val);
+
+	// 4. Un-link the PETSc memory
+	VecResetArray(solution_vec);
+
+	KSPGetIterationNumber(ksp, &its);
+	KSPGetConvergedReason(ksp, &reason);
+
+	// =================================================================
+	// 5. Thermodynamic Clamp (Prevent Numerical Undershoot/Overshoot)
+	// =================================================================
+	for (int k = local.origin.k; k < (local.origin.k + local.extent.k); ++k)
+	{
+		for (int j = local.origin.j; j < (local.origin.j + local.extent.j); ++j)
+		{
+			for (int i = local.origin.i; i < (local.origin.i + local.extent.i); ++i)
+			{
+				Index idx(i, j, k);
+
+				// Force saturation to remain strictly within [0.0, 1.0]
+				saturation[idx] = std::max(0.0, std::min(1.0, saturation[idx]));
+			}
+		}
+	}
+	// =================================================================
+
+	// 6. Output Solver Statistics
+	if (mpi_rank == 0)
+	{
+		if (reason > 0)
+		{
+			std::cout << "    [Implicit Saturation] Converged in " << its << " iterations. (Reason Code: " << reason << ")" << std::endl;
+			std::cout << "    [Implicit Saturation] Raw Min: " << min_val << " | Raw Max: " << max_val << std::endl;
+		}
+		else
+		{
+			std::cout << "    [Implicit Saturation] DIVERGED/FAILED in " << its << " iterations. (Error Code: " << reason << ")" << std::endl;
+		}
+	}
+}
+
 // /*
 // void Simulation::updateSaturation(double dt)
 // {

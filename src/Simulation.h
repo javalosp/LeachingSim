@@ -57,6 +57,8 @@ public:
 	void solvePressure();
 	// void setupConcentrationEqns(double dt);
 	void setupConcentrationEqns(double dt, MPIDomain<double, 1, IDX_SCHEME> &field, double inlet_bc, double sulphide_bc);
+	void setupSaturationEqns(double dt);
+	void solveSaturation();
 	void solveConc();
 	void calculateFlux();
 	void solveAcid();
@@ -81,11 +83,13 @@ public:
 	double c_sat;			 // Saturation concentration limit
 	double evaporative_flux; // Rate of evaporation at the air interface (m/s)
 	double top_pressure;	 // Controls the "irrigation" head
+	double max_cap_grad;	 // Capillary regularisation limit
 	// van Genuchten model parameters
 	double vg_alpha; // van Genuchten alpha parameter (1/m)
 	double vg_n;	 // van Genuchten n parameter ()
 	double s_res;	 // Residual saturation ()
 	bool use_instant_precipitation;
+	bool use_implicit_saturation;
 	double solid_density; // Density of the precipitate
 	double porosity;
 

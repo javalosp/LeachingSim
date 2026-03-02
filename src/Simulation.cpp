@@ -2248,3 +2248,86 @@ void Simulation::solveAcid()
 		}
 	}
 }
+
+/**
+ * @brief Writes checkpoint files with the values of primary state variables.
+ *
+ * This function uses a file-per-rank writing.
+ * Each MPI process will directly dump its local memory slice
+ * (including its padded ghost cells) to a raw binary file, such that
+ * when you restart a simulation from a checkpoint,
+ * each rank simply reads its own file back into memory
+ */
+void Simulation::writeCheckpoint(std::string out_dir, int step)
+{
+	// Create a unique filename for each MPI rank
+	std::stringstream fname;
+	fname << out_dir << "/checkpoint_rank" << mpi_rank << "_" << std::setw(6) << std::setfill('0') << step << ".bin";
+
+	// Open the file in binary write mode
+	std::ofstream fout(fname.str(), std::ios::out | std::ios::binary);
+	if (!fout.is_open())
+	{
+		std::cerr << "    [Error] Rank " << mpi_rank << " failed to open checkpoint file for writing!" << std::endl;
+		return;
+	}
+
+	// Get the total local array size (including padded boundaries)
+	size_t total_size = pressure.padded.extent.size(); //
+
+	// Dump the raw memory of the 7 primary state variables
+	fout.write(reinterpret_cast<char *>(img_data.getData().get()), total_size * sizeof(RAWType));
+	fout.write(reinterpret_cast<char *>(frac.getData().get()), total_size * sizeof(float));
+	fout.write(reinterpret_cast<char *>(precipitate_inventory.getData().get()), total_size * sizeof(double));
+	fout.write(reinterpret_cast<char *>(saturation.getData().get()), total_size * sizeof(double));
+	fout.write(reinterpret_cast<char *>(pressure.getData().get()), total_size * sizeof(double));
+	fout.write(reinterpret_cast<char *>(conc.getData().get()), total_size * sizeof(double));
+	fout.write(reinterpret_cast<char *>(conc_acid.getData().get()), total_size * sizeof(double));
+
+	fout.close();
+
+	if (mpi_rank == 0)
+	{
+		std::cout << "    [Checkpoint] Successfully saved binary state for step " << step << " to " << out_dir << std::endl;
+	}
+}
+
+/**
+ * @brief Loads checkpoint files with the values of primary state variables.
+ *
+ * Just do the reverse process of writeCheckpoint
+ */
+void Simulation::loadCheckpoint(std::string out_dir, int step)
+{
+	// Locate the specific file for this MPI rank
+	std::stringstream fname;
+	fname << out_dir << "/checkpoint_rank" << mpi_rank << "_" << std::setw(6) << std::setfill('0') << step << ".bin";
+
+	// Open the file in binary read mode
+	std::ifstream fin(fname.str(), std::ios::in | std::ios::binary);
+	if (!fin.is_open())
+	{
+		std::cerr << "    [Fatal Error] Rank " << mpi_rank << " failed to locate checkpoint file: " << fname.str() << std::endl;
+		MPI_Abort(PETSC_COMM_WORLD, 1); // Abort the whole simulation if a piece is missing
+		return;
+	}
+
+	// Get the total local array size
+	size_t total_size = pressure.padded.extent.size(); //
+
+	// Read the raw bytes directly back into the memory arrays
+	fin.read(reinterpret_cast<char *>(img_data.getData().get()), total_size * sizeof(RAWType));
+	fin.read(reinterpret_cast<char *>(frac.getData().get()), total_size * sizeof(float));
+	fin.read(reinterpret_cast<char *>(precipitate_inventory.getData().get()), total_size * sizeof(double));
+	fin.read(reinterpret_cast<char *>(saturation.getData().get()), total_size * sizeof(double));
+	fin.read(reinterpret_cast<char *>(pressure.getData().get()), total_size * sizeof(double));
+	fin.read(reinterpret_cast<char *>(conc.getData().get()), total_size * sizeof(double));
+	fin.read(reinterpret_cast<char *>(conc_acid.getData().get()), total_size * sizeof(double));
+
+	fin.close();
+
+	if (mpi_rank == 0)
+	{
+		std::cout << "    [Checkpoint] Successfully loaded binary state from step " << step << std::endl;
+	}
+}

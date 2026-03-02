@@ -1,0 +1,123 @@
+#PBS -lselect=1:ncpus=10:mem=100gb
+#PBS -lwalltime=24:00:00
+#PBS -j oe
+#PBS -N benchmark_test
+
+module load tools/prod
+module load foss/2023a
+module load Boost/1.82.0-GCC-12.3.0
+module load PETSc/3.20.3-foss-2023a
+module load VTK/9.3.0-foss-2023a
+
+cd $EPHEMERAL/LeachingSim
+
+echo "Job running on nodes:"
+cat $PBS_NODEFILE
+
+# LEACHING & CURING BENCHMARK SUITE
+
+CORES=10
+TIME_STEPS=10 # Run for 10 iterations
+DT=3600
+
+# Calculate the maximum time required for the requested number of steps
+TMAX=$(echo "$TIME_STEPS * $DT" | bc)
+
+echo "Starting benchmark tests..."
+mkdir -p benchmark_logs
+mkdir -p benchmark_outputs
+
+# ------------------------------------------------------------------------------
+# TEST 1: Leaching - Explicit
+# ------------------------------------------------------------------------------
+echo "Running Test 1: Leaching (Explicit)..."
+( time mpiexec -n $CORES --oversubscribe ./release/LeachingSim_uint8 \
+       --raw-file channel_test_input.raw \
+       --xext 50 \
+       --yext 50 \
+       --zext 50 \
+       --csat 1.0 \
+       --theta 1.0 \
+       --dt $DT \
+       --tmax $TMAX \
+       --nout 1 \
+       --D 1.0 \
+       --kreac 1.0e-4 \
+       --voxel_size 1.0 \
+       --top_pressure 10000.0 \
+       --evap_flux 0.0 \
+       --implicit_sat false \
+       --out_dir ./benchmark_outputs/leach_exp ) \
+       > benchmark_logs/leach_explicit.log 2>&1
+
+# ------------------------------------------------------------------------------
+# TEST 2: Leaching - Implicit
+# ------------------------------------------------------------------------------
+echo "Running Test 2: Leaching (Implicit)..."
+( time mpiexec -n $CORES --oversubscribe ./release/LeachingSim_uint8 \
+       --raw-file channel_test_input.raw \
+       --xext 50 \
+       --yext 50 \
+       --zext 50 \
+       --csat 1.0 \
+       --theta 1.0 \
+       --dt $DT \
+       --tmax $TMAX \
+       --nout 1 \
+       --D 1.0 \
+       --kreac 1.0e-4 \
+       --voxel_size 1.0 \
+       --top_pressure 10000.0 \
+       --evap_flux 0.0 \
+       --implicit_sat true \
+       --out_dir ./benchmark_outputs/leach_imp ) \
+       > benchmark_logs/leach_implicit.log 2>&1
+
+# ------------------------------------------------------------------------------
+# TEST 3: Curing - Explicit (Using the 50,000 Pa/m speed limit)
+# ------------------------------------------------------------------------------
+echo "Running Test 3: Curing (Explicit)..."
+( time mpiexec -n $CORES --oversubscribe ./release/LeachingSim_uint8 \
+       --raw-file channel_test_input.raw \
+       --xext 50 \
+       --yext 50 \
+       --zext 50 \
+       --csat 1.0 \
+       --theta 1.0 \
+       --dt $DT \
+       --tmax $TMAX \
+       --nout 1 \
+       --D 1.0 \
+       --kreac 1.0e-4 \
+       --voxel_size 1.0 \
+       --top_pressure 0.0 \
+       --evap_flux 1.0e-6 \
+       --max_cap_grad 50000.0 \
+       --implicit_sat false \
+       --out_dir ./benchmark_outputs/cure_exp ) \
+       > benchmark_logs/cure_explicit.log 2>&1
+
+# ------------------------------------------------------------------------------
+# TEST 4: Curing - Implicit
+# ------------------------------------------------------------------------------
+echo "Running Test 4: Curing (Implicit)..."
+( time mpiexec -n $CORES --oversubscribe ./release/LeachingSim_uint8 \
+       --raw-file channel_test_input.raw \
+       --xext 50 \
+       --yext 50 \
+       --zext 50 \
+       --csat 1.0 \
+       --theta 1.0 \
+       --dt $DT \
+       --tmax $TMAX \
+       --nout 1 \
+       --D 1.0 \
+       --kreac 1.0e-4 \
+       --voxel_size 1.0 \
+       --top_pressure 0.0 \
+       --evap_flux 1.0e-6 \
+       --implicit_sat true \
+       --out_dir ./benchmark_outputs/cure_imp ) \
+       > benchmark_logs/cure_implicit.log 2>&1
+
+echo "Benchmarking Complete! Check the benchmark_logs/ directory."

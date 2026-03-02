@@ -63,6 +63,10 @@ public:
 	void calculateFlux();
 	void solveAcid();
 
+	// Checkpoint/restart functions
+	void writeCheckpoint(std::string out_dir, int step);
+	void loadCheckpoint(std::string out_dir, int step);
+
 	// Template & Helper Functions
 	template <IndexScheme S>
 	void decomposeDomain();

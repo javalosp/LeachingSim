@@ -36,7 +36,7 @@ int main(int argc, char *argv[])
 
 		// Command line argument parsing
 		opts::options_description cmd_opts("Command line arguments");
-		cmd_opts.add_options()("help,h", "Print this message and exit.")("raw-file", opts::value<string>()->required(), "Input RAW file specifying the domain.")("xext", opts::value<int>()->required(), "The x extent of the domain")("yext", opts::value<int>()->required(), "The y extent of the domain")("zext", opts::value<int>()->required(), "The z extent of the domain")("out_dir", opts::value<string>()->default_value("./output"), "The output directory")("header_size", opts::value<size_t>()->default_value(0), "RAW file header size in bytes.")("voxel_size", opts::value<double>()->default_value(1.), "Size of voxels (m).")("D", opts::value<double>()->default_value(1.), "Diffusion constant (m^2/s).")("kext", opts::value<double>()->default_value(1.), "Mass transfer to exterior.")("kreac", opts::value<double>()->default_value(1.), "Reaction transfer from sulphide grains.")("Dpore_fac", opts::value<double>()->default_value(1.), "Pore diffusivity enhancement factor")("dt", opts::value<double>()->default_value(1.), "Simulation time step (s).")("tmax", opts::value<double>()->default_value(10.), "Maximum simulation time (s).")("nout", opts::value<int>()->default_value(1), "Output every N-th time step.")("seed", opts::value<size_t>()->default_value(42), "Pseudo-RNG seed value.")("csat", opts::value<double>()->default_value(0.95), "Saturation concentration limit.")("evap_flux", opts::value<double>()->default_value(0.0), "Evaporative flux (m/s)")("theta", opts::value<double>()->default_value(1.0), "Time scheme (0=Explicit, 0.5=Crank-Nicolson, 1.0=Implicit)")("instant_precip", opts::value<bool>()->default_value(false), "Enable instant pore blinding upon supersaturation")("porosity", opts::value<double>()->default_value(0.1), "Material porosity")("top_pressure", opts::value<double>()->default_value(10000.0), "Applied pressure head at the top boundary (Pa, simulates irrigation)")("max_cap_grad", opts::value<double>()->default_value(50000.0), "Maximum capillary pressure gradient (Pa/m) for explicit solver stability")("implicit_sat", opts::value<bool>()->default_value(false), "Toggle: True = Implicit PETSc Solver, False = Explicit Sub-stepping");
+		cmd_opts.add_options()("help,h", "Print this message and exit.")("raw-file", opts::value<string>()->required(), "Input RAW file specifying the domain.")("xext", opts::value<int>()->required(), "The x extent of the domain")("yext", opts::value<int>()->required(), "The y extent of the domain")("zext", opts::value<int>()->required(), "The z extent of the domain")("out_dir", opts::value<string>()->default_value("./output"), "The output directory")("header_size", opts::value<size_t>()->default_value(0), "RAW file header size in bytes.")("voxel_size", opts::value<double>()->default_value(1.), "Size of voxels (m).")("D", opts::value<double>()->default_value(1.), "Diffusion constant (m^2/s).")("kext", opts::value<double>()->default_value(1.), "Mass transfer to exterior.")("kreac", opts::value<double>()->default_value(1.), "Reaction transfer from sulphide grains.")("Dpore_fac", opts::value<double>()->default_value(1.), "Pore diffusivity enhancement factor")("dt", opts::value<double>()->default_value(1.), "Simulation time step (s).")("tmax", opts::value<double>()->default_value(10.), "Maximum simulation time (s).")("nout", opts::value<int>()->default_value(1), "Output every N-th time step.")("seed", opts::value<size_t>()->default_value(42), "Pseudo-RNG seed value.")("csat", opts::value<double>()->default_value(0.95), "Saturation concentration limit.")("evap_flux", opts::value<double>()->default_value(0.0), "Evaporative flux (m/s)")("theta", opts::value<double>()->default_value(1.0), "Time scheme (0=Explicit, 0.5=Crank-Nicolson, 1.0=Implicit)")("instant_precip", opts::value<bool>()->default_value(false), "Enable instant pore blinding upon supersaturation")("porosity", opts::value<double>()->default_value(0.1), "Material porosity")("top_pressure", opts::value<double>()->default_value(10000.0), "Applied pressure head at the top boundary (Pa, simulates irrigation)")("max_cap_grad", opts::value<double>()->default_value(50000.0), "Maximum capillary pressure gradient (Pa/m) for explicit solver stability")("implicit_sat", opts::value<bool>()->default_value(false), "Toggle: True = Implicit PETSc Solver, False = Explicit Sub-stepping")("restart_step", opts::value<int>()->default_value(0), "Step to restart from (0 = fresh start)")("chk_freq", opts::value<int>()->default_value(1000), "Number of steps between saving binary checkpoints");
 		/* Simluation cases can vary depending on some options values, e.g.
 		Leaching case
 			./LeachingSim --top_pressure 10000.0 --evap_flux 0.0 ...
@@ -91,25 +91,6 @@ int main(int argc, char *argv[])
 		// Read the file with the physical domain
 		the_simulation.readRAW(cmd["raw-file"].as<string>(), cmd["header_size"].as<size_t>());
 
-		// Initialise fields
-		the_simulation.initFields();
-
-		// Initialise physical state
-		the_simulation.initFrac();
-		the_simulation.initSaturation();
-		the_simulation.initAcid();
-		the_simulation.setupReactionRates();
-
-		// Share the initial state across MPI boundaries
-		the_simulation.doExchange();
-
-		// Precalculate initial properties before iteration 0 begins
-		// This ensures coeff_mat is correctly built at t=0
-		the_simulation.updateRelativePermeability();
-		the_simulation.updateCapillaryPressure();
-		the_simulation.initProperties();
-		the_simulation.permeability.exchangePadding(MPI_DOUBLE);
-
 		// Time Step Stability Check (Diffusive)
 		double dx = the_simulation.dx;
 		double D_coeff = the_simulation.D;
@@ -159,6 +140,61 @@ int main(int argc, char *argv[])
 		// Main Simulation Loop
 		double t = 0.0;
 		size_t n = 0;
+
+		// Initialisation or restart from checkpoint
+		int start_step = cmd["restart_step"].as<int>();
+
+		if (start_step > 0)
+		{
+			if (mpi_rank == 0)
+				cout << "Restarting simulation from step " << start_step << "..." << endl;
+
+			// Load the primary state variables from checkpoint
+			the_simulation.loadCheckpoint(out_dir, start_step);
+
+			// Re-initialise reaction rates based on the loaded geometry
+			the_simulation.setupReactionRates();
+
+			// Share the loaded state across MPI boundaries
+			the_simulation.doExchange();
+
+			// Rebuild the derived variables from the loaded state
+			the_simulation.updateRelativePermeability();
+			the_simulation.updateCapillaryPressure();
+			the_simulation.initProperties();
+
+			// Ensure the pressure solver has valid neighbor permeabilities
+			the_simulation.permeability.exchangePadding(MPI_DOUBLE);
+
+			// Fast-forward the time tracking variables
+			n = start_step;
+			t = start_step * dt_actual;
+		}
+		else
+		{
+			if (mpi_rank == 0)
+				cout << "Initialising new simulation..." << endl;
+
+			// Initialise fields
+			the_simulation.initFields();
+
+			// Initialise physical state
+			the_simulation.initFrac();
+			the_simulation.initSaturation();
+			the_simulation.initAcid();
+			the_simulation.setupReactionRates();
+
+			// Share the initial state across MPI boundaries
+			the_simulation.doExchange();
+
+			// Precalculate initial properties before iteration 0 begins
+			the_simulation.updateRelativePermeability();
+			the_simulation.updateCapillaryPressure();
+			the_simulation.initProperties();
+
+			// Ensure coeff_mat is correctly built at t=0
+			the_simulation.permeability.exchangePadding(MPI_DOUBLE);
+		}
 
 		double tmax = cmd["tmax"].as<double>();
 		int nout = cmd["nout"].as<int>();
@@ -291,6 +327,12 @@ int main(int argc, char *argv[])
 									  VTKOutput::Permeability | VTKOutput::AcidConc;
 
 				the_simulation.writeVTKFile(out_dir + "/output", n, output_flags);
+			}
+
+			// Checkpoint Output
+			if (n > 0 && n % cmd["chk_freq"].as<int>() == 0)
+			{
+				the_simulation.writeCheckpoint(out_dir, n);
 			}
 
 			t += dt_actual;

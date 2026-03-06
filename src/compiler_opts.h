@@ -75,10 +75,13 @@ enum PixelType
 	// Pore = 1,
 	// Sulphide = 3
 
+	// These are the actual labels from CT scan .raw files
 	Rock = 3,
 	Air = 1,
 	Pore = 2,
-	Sulphide = 4
+	Sulphide = 4,
+	// Secondary mineral formation
+	Precipitate = 5
 };
 
 #define MPIOUT(a) \

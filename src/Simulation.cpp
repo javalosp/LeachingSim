@@ -560,7 +560,7 @@ int Simulation::updateFrac(double dt)
 							frac[idx] = 0.0;
 							if (img_data[idx] == Sulphide)
 							{
-								img_data[idx] = (RAWType)Pore;
+								img_data[idx] = Pore;
 								// Ensure the new pore starts clean
 								precipitate_inventory[idx] = 0.0;
 								conc[idx] = c_sat; // Instant saturation in the newly formed pore
@@ -2146,8 +2146,8 @@ void Simulation::handleSurfaceEffects()
 					// If it's a surface voxel, apply the precipitation effect
 					if (is_surface_voxel)
 					{
-						conc[idx] = 1.0;			   // Set concentration to maximum (saturated)
-						img_data[idx] = (RAWType)Rock; // Clog the pore with precipitate
+						conc[idx] = 1.0;	  // Set concentration to maximum (saturated)
+						img_data[idx] = Rock; // Clog the pore with precipitate
 					}
 				}
 			}
@@ -2181,7 +2181,7 @@ void Simulation::handlePrecipitation()
 
 					if (use_instant_precipitation)
 					{
-						img_data[idx] = Rock;
+						img_data[idx] = Precipitate;
 					}
 					else
 					{
@@ -2199,7 +2199,7 @@ void Simulation::handlePrecipitation()
 						double critical_limit = 0.90;
 						if (precipitate_inventory[idx] > critical_limit)
 						{
-							img_data[idx] = Rock;
+							img_data[idx] = Precipitate;
 						}
 					}
 

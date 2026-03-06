@@ -81,6 +81,9 @@ enum PixelType
 	Pore = 2,
 	Sulphide = 4,
 	// Secondary mineral formation
+	// this doesn't come from CT scan labels
+	// ensure that the value for this new material type is not
+	// already in use in the .raw
 	Precipitate = 5
 };
 
@@ -88,17 +91,6 @@ enum PixelType
 	if (a == 0)   \
 	std::cout
 
-/*
-// handle cx1's flakey support for C++11 std library (26/03/2014)
-#ifdef _MSC_VER
-#include <random>
-namespace rng = std;
-#else
-#include <boost/random.hpp>
-namespace rng = boost::random;
-#endif
-*/
-// Update to cx1 issue mentioned above
 #include <random>
 namespace rng = std;
 

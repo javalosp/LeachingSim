@@ -10,6 +10,8 @@
 #include "MPIDomain.h"
 
 // Enum for selecting which data arrays to write to VTK files
+// (this is a bit mask, i.e. each enum value only sets a single bit
+// hex values relate better to binary than decimal for this)
 enum VTKOutput
 {
 	Conc = 0x001,

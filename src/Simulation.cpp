@@ -240,122 +240,6 @@ void Simulation::initProperties()
 	}
 }
 
-/*
-void Simulation::initProperties()
-{
-	const double pore_permeability = 1.0e-9;  // High permeability for open channels
-	const double rock_permeability = 1.0e-18; // Practically impermeable solid rock
-
-	for (int k = local.origin.k; k < (local.origin.k + local.extent.k); ++k)
-	{
-		for (int j = local.origin.j; j < (local.origin.j + local.extent.j); ++j)
-		{
-			for (int i = local.origin.i; i < (local.origin.i + local.extent.i); ++i)
-			{
-				Index idx(i, j, k);
-				RAWType type = img_data[idx];
-
-				// Determine Intrinsic Permeability dynamically
-				double K_intrinsic = rock_permeability; // Default to dense rock
-
-				if (type == Pore || type == Air)
-				{
-					K_intrinsic = pore_permeability;
-				}
-				else if (type >= Sulphide)
-				{
-					// Get the remaining solid fraction (1.0 = solid, 0.0 = completely dissolved)
-					double f = frac[idx];
-
-					// Log-Linear Interpolation for smooth physical transition
-					double log_k_rock = std::log10(rock_permeability);
-					double log_k_pore = std::log10(pore_permeability);
-
-					double log_k_eff = (f * log_k_rock) + ((1.0 - f) * log_k_pore);
-					K_intrinsic = std::pow(10.0, log_k_eff);
-				}
-
-				// 2. Set dynamic viscosity based on material
-				if (type == Air)
-				{
-					viscosity[idx] = 1.8e-5; // Air viscosity
-				}
-				else
-				{
-					viscosity[idx] = 1.0e-3; // Water/Acid viscosity
-				}
-
-				// 3. Apply multiphase relative permeability scaling
-				// (Assuming rel_permeability was initialized correctly in updateRelativePermeability)
-				permeability[idx] = K_intrinsic * rel_permeability[idx];
-			}
-		}
-	}
-}
-*/
-/*
- void Simulation::initProperties()
-{
-	const double pore_permeability = 1.0e-9;
-	const double rock_permeability = 1.0e-18;
-	const double fluid_viscosity = 1.0e-3;
-	// const double air_viscosity = 1.0e-5;
-
-	// TODO: Set material properties parameters in a settings file or command-line
-	for (int k = local.origin.k; k < (local.origin.k + local.extent.k); ++k)
-		for (int j = local.origin.j; j < (local.origin.j + local.extent.j); ++j)
-			for (int i = local.origin.i; i < (local.origin.i + local.extent.i); ++i)
-			{
-
-				// Index idx(i, j, k);
-				// RAWType voxel_type = img_data[idx];
-				// switch (voxel_type)
-				// {
-				// case Pore:
-				// 	permeability[idx] = pore_permeability;
-				// 	viscosity[idx] = fluid_viscosity;
-				// 	break;
-				// case Rock:
-				// 	permeability[idx] = rock_permeability;
-				// 	viscosity[idx] = fluid_viscosity;
-				// 	break;
-				// case Sulphide:
-				// 	permeability[idx] = rock_permeability;
-				// 	viscosity[idx] = fluid_viscosity;
-				// 	break;
-				// case Air:
-				// default:
-				// 	permeability[idx] = 0.0;
-				// 	viscosity[idx] = 0.0;
-				// 	break;
-				// }
-
-				Index idx(i, j, k);
-				RAWType voxel_type = img_data[idx];
-
-				double intrinsic_K;
-				switch (voxel_type)
-				{
-				case Pore:
-					intrinsic_K = pore_permeability;
-					break;
-				case Rock:
-				case Sulphide:
-					intrinsic_K = rock_permeability;
-					break;
-				case Air:
-				default:
-					intrinsic_K = 0.0;
-					break;
-				}
-
-				// The 'permeability' field now stores the effective permeability
-				permeability[idx] = intrinsic_K * rel_permeability[idx];
-				viscosity[idx] = fluid_viscosity;
-			}
-}
-*/
-
 /**
  * @brief Initialises the fraction of reactive material in each voxel.
  * * Sets the 'frac' field to 1.0 for sulphide voxels and 0.0 for all others.
@@ -462,7 +346,7 @@ int Simulation::updateFrac(double dt)
 	}
 
 	// int num_steps = std::ceil(dt / dt_safe);
-	// FIX: Use a double for the ceiling calculation, then cap it, then cast it.
+	// Use a double for the ceiling calculation, then cap it, then cast it.
 	double calculated_steps = std::ceil(dt / dt_safe);
 	int num_steps = 1;
 	if (num_steps > 1000)
@@ -488,7 +372,7 @@ int Simulation::updateFrac(double dt)
 		std::cout << "    [Leaching] Sub-stepping required: " << num_steps << " steps of " << dt_sub << "s." << std::endl;
 	}
 
-	// 2. Perform Sub-stepped updates
+	// Perform Sub-stepped updates
 	for (int step = 0; step < num_steps; ++step)
 	{
 		for (int k = local.origin.k; k < (local.origin.k + local.extent.k); ++k)
@@ -550,11 +434,8 @@ int Simulation::updateFrac(double dt)
 								conc_acid[Index(i, j, k - 1)] -= mass_loss * (f_zm / flux_sum);
 						}
 
-						// ==========================================
-
 						// Check if voxel has fully dissolved
-						// if (frac[idx] <= 0.0)
-						// Set a leaching threshold
+						// using a leaching threshold (e.g. 1e-4)
 						if (frac[idx] <= 1e-4)
 						{
 							frac[idx] = 0.0;
@@ -581,206 +462,6 @@ int Simulation::updateFrac(double dt)
 
 	return leached_locally;
 }
-
-// int Simulation::updateFrac(double dt)
-// {
-//    int leached_locally = 0;
-
-//    // Assume Saturation Concentration (solubility limit) is 1.0 (normalized)
-//    // Or pass this as a parameter if you have a specific value in mol/m3
-//    // const double C_sat = 1.0;
-
-//    for (int k = local.origin.k; k < (local.origin.k + local.extent.k); ++k)
-//    {
-// 	   for (int j = local.origin.j; j < (local.origin.j + local.extent.j); ++j)
-// 	   {
-// 		   for (int i = local.origin.i; i < (local.origin.i + local.extent.i); ++i)
-// 		   {
-// 			   Index idx(i, j, k);
-
-// 			   // Only process reactive solids
-// 			   if (img_data[idx] >= Sulphide)
-// 			   {
-// 				   double total_mass_loss = 0.0;
-
-// 				   // Lambda to calculate chemical flux to one liquid neighbor
-// 				   auto calc_surface_flux = [&](Index neighbor_idx)
-// 				   {
-// 					   if (neighbor_idx.valid(global))
-// 					   {
-// 						   RAWType neighbor_type = img_data[neighbor_idx];
-
-// 						   // Reaction only happens at interface with Pore
-// 						   if (neighbor_type == Pore)
-// 						   {
-// 							   // 1. Calculate Transport Coefficient (k_trans ~ D/dx)
-// 							   // We can also add advection velocity if flow is strong
-// 							   double k_trans = D / dx;
-
-// 							   // 2. Calculate Reaction Coefficient (k_reac)
-// 							   double k_rxn = kreac;
-
-// 							   // 3. Calculate Effective Coefficient (Series Resistance)
-// 							   // This is the logic from "Other Code" adapted to yours
-// 							   double k_eff = 1.0 / ((1.0 / k_trans) + (1.0 / k_rxn));
-
-// 							   // 4. Calculate Driving Force (c_sat - C_pore)
-// 							   double driving_force = c_sat - conc[neighbor_idx];
-
-// 							   // Ensure we don't leach backwards if pore is supersaturated
-// 							   if (driving_force < 0)
-// 								   driving_force = 0;
-
-// 							   // 5. Return Flux (mol/m^2/s)
-// 							   return k_eff * driving_force;
-// 						   }
-// 					   }
-// 					   return 0.0;
-// 				   };
-
-// 				   // Sum flux for all 6 faces
-// 				   double flux_sum = 0.0;
-// 				   flux_sum += calc_surface_flux(Index(i + 1, j, k));
-// 				   flux_sum += calc_surface_flux(Index(i - 1, j, k));
-// 				   flux_sum += calc_surface_flux(Index(i, j + 1, k));
-// 				   flux_sum += calc_surface_flux(Index(i, j - 1, k));
-// 				   flux_sum += calc_surface_flux(Index(i, j, k + 1));
-// 				   flux_sum += calc_surface_flux(Index(i, j, k - 1));
-
-// 				   // Update fraction
-// 				   // Mass Loss = Flux * Area * dt
-// 				   // (Assuming frac is normalized mass)
-// 				   double area_per_face = dx * dx;
-// 				   total_mass_loss = flux_sum * area_per_face * dt;
-
-// 				   // Apply loss.
-// 				   // Note: You might need to divide by Molar Density if frac isn't moles.
-// 				   frac[idx] -= total_mass_loss;
-
-// 				   if (frac[idx] <= 0.0)
-// 				   {
-// 					   frac[idx] = 0.0;
-// 					   img_data[idx] = (RAWType)Pore;
-
-// 					   // IMPORTANT: Initialise the new pore concentration
-// 					   // usually to c_sat because it just dissolved
-// 					   conc[idx] = c_sat;
-
-// 					   leached_locally++;
-// 				   }
-// 			   }
-// 		   }
-// 	   }
-//    }
-//    return leached_locally;
-// }
-
-/**
- * @brief Updates the fraction of reactive material based on flux from the grain surface.
- *
- * This function models the leaching process. It calculates the total flux of the
- * dissolved species leaving each sulphide voxel and uses this flux to decrease the
- * remaining fraction 'frac'. When a voxel's fraction reaches zero, its material
- * type is changed from Sulphide to Pore.
- *
- * @param dt The current time step size.
- * @return The number of voxels that were fully leached in this step.
- */
-// /*
-// int Simulation::updateFrac(double dt)
-// {
-// 	int leached_locally = 0;
-
-// 	for (int k = local.origin.k; k < (local.origin.k + local.extent.k); ++k)
-// 	{
-// 		for (int j = local.origin.j; j < (local.origin.j + local.extent.j); ++j)
-// 		{
-// 			for (int i = local.origin.i; i < (local.origin.i + local.extent.i); ++i)
-// 			{
-// 				Index idx(i, j, k);
-
-// 				if (img_data[idx] >= Sulphide)
-// 				{
-// 					double total_flux_out = 0.0;
-
-// 					// Lambda to calculate flux to one neighbor
-// 					auto get_flux_to_neighbor = [&](Index neighbor_idx)
-// 					{
-// 						if (neighbor_idx.valid(global))
-// 						{
-// 							RAWType neighbor_type = img_data[neighbor_idx];
-// 							if (neighbor_type == Pore || neighbor_type == Rock)
-// 							{
-// 								// Diffusive flux is proportional to concentration gradient
-// 								double diffusive_flux = D * (conc[idx] - conc[neighbor_idx]) / dx;
-
-// 								// Advective flux is q * c (using upwinding)
-// 								// We need the flux at the face, which we approximate by averaging
-// 								double q_face_x = (flux_x[idx] + flux_x[neighbor_idx]) / 2.0;
-// 								double advective_flux = std::max(0.0, q_face_x) * conc[idx] + std::min(0.0, q_face_x) * conc[neighbor_idx];
-
-// 								return diffusive_flux + advective_flux;
-// 							}
-// 						}
-// 						return 0.0;
-// 					};
-
-// 					// Sum the flux out of all 6 faces of the voxel
-// 					total_flux_out += get_flux_to_neighbor(Index(i + 1, j, k));
-// 					total_flux_out += get_flux_to_neighbor(Index(i - 1, j, k));
-// 					total_flux_out += get_flux_to_neighbor(Index(i, j + 1, k));
-// 					total_flux_out += get_flux_to_neighbor(Index(i, j - 1, k));
-// 					total_flux_out += get_flux_to_neighbor(Index(i, j, k + 1));
-// 					total_flux_out += get_flux_to_neighbor(Index(i, j, k - 1));
-
-// 					// Update frac based on the total flux leaving the grain voxel
-// 					// (Flux has units of mol/m^2/s, multiply by area and dt, divide by molar volume)
-// 					// We use 'kreac' as a scaling factor for this complex term.
-// 					frac[idx] -= (kreac * total_flux_out * dx * dx) * dt;
-
-// 					if (frac[idx] < 0.0)
-// 					{
-// 						frac[idx] = 0.0;
-// 						img_data[idx] = (RAWType)Pore;
-// 						leached_locally++;
-// 					}
-// 				}
-// 			}
-// 		}
-// 	}
-// 	return leached_locally;
-// }
-// */
-
-/**
- * @brief Updates the fraction of reactive material based on the local concentration.
- * * Simulates the leaching process over a single time step. When a voxel's fraction
- * reaches zero, its material type is changed to Pore.
- * @param dt The current time step size.
- * @return The number of voxels that were fully leached in this step.
-
-int Simulation::updateFrac(double dt)
-{
-	int leached_locally = 0;
-	for (int k = local.origin.k; k < (local.origin.k + local.extent.k); ++k)
-		for (int j = local.origin.j; j < (local.origin.j + local.extent.j); ++j)
-			for (int i = local.origin.i; i < (local.origin.i + local.extent.i); ++i)
-			{
-				Index idx(i, j, k);
-				if (img_data[idx] >= Sulphide)
-				{
-					frac[idx] -= kreac * conc[idx] * dt;
-					if (frac[idx] < 0.0)
-					{
-						frac[idx] = 0.0;
-						img_data[idx] = (RAWType)Pore;
-						leached_locally++;
-					}
-				}
-			}
-	return leached_locally;
-}
-	 */
 
 /**
  * @brief Manages the exchange of halo/padding data between MPI processes.
@@ -855,60 +536,7 @@ void Simulation::setupPressureEqns()
 						}
 						continue;
 					}
-					/*
-					if (voxel_type == Air && i == 0)
-					{
-						VecSetValue(sources_vec, arridx, 10000.0, ADD_VALUES); // Top pressure
-					}
-					else
-					{
-						VecSetValue(sources_vec, arridx, 0.0, ADD_VALUES); // Zero pressure
-					}
-					continue;
-					*/
 				}
-
-				/*
-				// Set values the linear system (Ax = b) as 1*P=0 for air, rock and sulphide voxels
-				if (voxel_type == Air)
-				{
-					MatSetValue(coeff_mat, arridx, arridx, 1.0, ADD_VALUES);
-
-					// Assuming i=0 is the TOP of the domain (inlet) and i=extent.i-1 is the bottom (outlet)
-					if (i == 0)
-					{
-						// Apply a pressure head at the top (e.g., 10000 Pascals)
-						VecSetValue(sources_vec, arridx, 10000.0, ADD_VALUES);
-					}
-					else if (i == global.extent.i - 1)
-					{
-						// Open to atmosphere at the bottom
-						VecSetValue(sources_vec, arridx, 0.0, ADD_VALUES);
-					}
-					else
-					{
-						// Default for any side-wall air boundaries
-						VecSetValue(sources_vec, arridx, 0.0, ADD_VALUES);
-					}
-					continue;
-				}
-				*/
-				/*
-				if (voxel_type == Air)
-				{
-					// MatSetValue(coeff_mat, arridx, arridx, 1.0, INSERT_VALUES);
-					// VecSetValue(sources_vec, arridx, 0.0, INSERT_VALUES);
-					MatSetValue(coeff_mat, arridx, arridx, 1.0, ADD_VALUES);
-					VecSetValue(sources_vec, arridx, 0.0, ADD_VALUES);
-				}
-				else if (voxel_type == Rock || voxel_type >= Sulphide)
-				{
-					// MatSetValue(coeff_mat, arridx, arridx, 1.0, INSERT_VALUES);
-					// VecSetValue(sources_vec, arridx, 0.0, INSERT_VALUES);
-					MatSetValue(coeff_mat, arridx, arridx, 1.0, ADD_VALUES);
-					VecSetValue(sources_vec, arridx, 0.0, ADD_VALUES);
-				}
-				*/
 				// For the pore, calculate the coefficients for the matrix
 				else if (voxel_type == Pore)
 				{
@@ -940,28 +568,6 @@ void Simulation::setupPressureEqns()
 							{
 								K_neighbor = permeability[neighbor_idx];
 							}
-							/*
-								// Also need a diagonal contribution for the open face
-								// double K_self = permeability[idx];
-								// Prevent absolute zero permeability
-								double K_self = std::max(permeability[idx], 1e-25);
-								double coeff = K_self / viscosity[idx]; // Note: uses K of the pore, not an average
-								diagonal_term -= coeff;
-							}
-
-							else
-							{
-								// This is an internal face (Pore-Pore or Pore-Rock).
-								// Standard connection based on average permeability.
-								// double K_avg = (permeability[idx] + permeability[neighbor_idx]) / 2.0;
-								// Ensure the connection is never numerically 0.0
-								double K_avg = std::max(K_avg, 1e-25);
-								double coeff = K_avg / viscosity[idx];
-								// MatSetValue(coeff_mat, arridx, neighbor_idx.arrayId(global), coeff, INSERT_VALUES);
-								MatSetValue(coeff_mat, arridx, neighbor_idx.arrayId(global), coeff, ADD_VALUES);
-								diagonal_term -= coeff;
-							}
-							*/
 							// Calculate average permeability and enforce the 1e-25 regularization
 							// double K_avg = (permeability[idx] + K_neighbor) / 2.0;
 							// K_avg = std::max(K_avg, 1e-25);
@@ -1191,34 +797,7 @@ void Simulation::setupConcentrationEqns(double dt, MPIDomain<double, 1, IDX_SCHE
 					VecSetValue(sources_vec, arridx, field[idx], ADD_VALUES);
 					continue;
 				}
-				/*
 
-				if (voxel_type == Air)
-				{
-					// MatSetValue(coeff_mat, arridx, arridx, 1.0, INSERT_VALUES);
-					// VecSetValue(sources_vec, arridx, 0.0, INSERT_VALUES);
-					MatSetValue(coeff_mat, arridx, arridx, 1.0, ADD_VALUES);
-					VecSetValue(sources_vec, arridx, 0.0, ADD_VALUES);
-					continue;
-				}
-				else if (voxel_type >= Sulphide)
-				{
-					// Set the Sulphide source value (1.0)
-					// MatSetValue(coeff_mat, arridx, arridx, 1.0, INSERT_VALUES);
-					// VecSetValue(sources_vec, arridx, 1.0, INSERT_VALUES);
-					MatSetValue(coeff_mat, arridx, arridx, 1.0, ADD_VALUES);
-					VecSetValue(sources_vec, arridx, 1.0, ADD_VALUES);
-					continue;
-				}
-				else if (voxel_type == Rock)
-				{
-					// MatSetValue(coeff_mat, arridx, arridx, 1.0, INSERT_VALUES);
-					// VecSetValue(sources_vec, arridx, conc[idx], INSERT_VALUES);
-					MatSetValue(coeff_mat, arridx, arridx, 1.0, ADD_VALUES);
-					VecSetValue(sources_vec, arridx, conc[idx], ADD_VALUES);
-					continue;
-				}
-				*/
 				MatSetValue(coeff_mat, arridx, arridx, inv_dt, ADD_VALUES);
 				// VecSetValue(sources_vec, arridx, conc[idx] * inv_dt, ADD_VALUES);
 				VecSetValue(sources_vec, arridx, field[idx] * inv_dt, ADD_VALUES);
@@ -1698,7 +1277,7 @@ void Simulation::updateSaturation(double dt)
 {
 	// const double porosity = 0.1; // This should ideally be a configurable parameter
 
-	// 1. Calculate maximum divergence of flux to determine safe sub-steps
+	// Calculate maximum divergence of flux to determine safe sub-steps
 	double max_div_q = 0.0;
 	for (int k = local.origin.k; k < (local.origin.k + local.extent.k); ++k)
 	{
@@ -1766,7 +1345,7 @@ void Simulation::updateSaturation(double dt)
 	}
 
 	// int num_steps = std::ceil(dt / dt_safe);
-	//  FIX: Use a double for the ceiling calculation, then cap it, then cast it.
+	// Use a double for the ceiling calculation, then cap it, then cast it.
 	double calculated_steps = std::ceil(dt / dt_safe);
 	int num_steps = 1;
 	if (num_steps > 1000)
@@ -1796,7 +1375,7 @@ void Simulation::updateSaturation(double dt)
 	MPIDomain<double, 1, IDX_SCHEME> saturation_new;
 	saturation_new.setup(local.origin, local.extent);
 
-	// 2. Perform Sub-stepped updates
+	// Perform Sub-stepped updates
 	for (int step = 0; step < num_steps; ++step)
 	{
 		for (int k = local.origin.k; k < (local.origin.k + local.extent.k); ++k)
@@ -1888,9 +1467,7 @@ void Simulation::setupSaturationEqns(double dt)
 				int arridx = idx.arrayId(global);
 				RAWType voxel_type = img_data[idx];
 
-				// =================================================================
-				// 1. Inactive Regions (Rock, Air, Sulphide)
-				// =================================================================
+				// Inactive Regions (Rock, Air, Sulphide)
 				if (voxel_type == Air || voxel_type == Rock || voxel_type >= Sulphide)
 				{
 					// These boundaries maintain their current saturation state
@@ -1899,11 +1476,8 @@ void Simulation::setupSaturationEqns(double dt)
 					continue;
 				}
 
-				// =================================================================
-				// 2. Active Pore Regions
-				// =================================================================
-
-				// A. Calculate Evaporation Sink
+				// Active pore regions
+				// Calculate evaporation sink
 				double evap_sink = 0.0;
 				Index neighbor_xp(i + 1, j, k);
 				Index neighbor_xm(i - 1, j, k);
@@ -1928,25 +1502,25 @@ void Simulation::setupSaturationEqns(double dt)
 
 				evap_sink = (air_faces * evaporative_flux) / dx;
 
-				// B. Setup Central Diagonal (phi / dt)
+				// Setup central diagonal (phi / dt)
 				double coeff_self = porosity * inv_dt;
 				double explicit_rhs = (porosity * inv_dt * saturation[idx]) - evap_sink;
 
-				// C. Lambda for Upwinded Mobility Advection
+				// Lambda for upwinded mobility advection
 				auto set_link = [&](Index neighbor_idx, double q_face_outward)
 				{
 					if (neighbor_idx.valid(global))
 					{
 						if (q_face_outward > 0)
 						{
-							// Flow is leaving this cell: Upwind depends on local saturation
-							// Max limit prevents divide-by-zero on dry cells
+							// Flow is leaving this cell -> upwind depends on local saturation
+							// Max limit prevents division by zero on dry cells
 							double v_eff = q_face_outward / std::max(saturation[idx], 1e-6);
 							coeff_self += v_eff / dx;
 						}
 						else
 						{
-							// Flow is entering this cell: Upwind depends on neighbor saturation
+							// Flow is entering this cell -> upwind depends on neighbor saturation
 							double v_eff = q_face_outward / std::max(saturation[neighbor_idx], 1e-6);
 							// v_eff is negative, off-diagonal matrix entries for entering flux are negative
 							MatSetValue(coeff_mat, arridx, neighbor_idx.arrayId(global), v_eff / dx, ADD_VALUES);
@@ -1954,7 +1528,7 @@ void Simulation::setupSaturationEqns(double dt)
 					}
 				};
 
-				// D. Evaluate flux on all 6 faces (Calculate OUTWARD flux specifically)
+				// Evaluate flux on all 6 faces (Calculate outward flux specifically)
 				if (neighbor_xp.valid(global))
 					set_link(neighbor_xp, (flux_x[idx] + flux_x[neighbor_xp]) / 2.0);
 				if (neighbor_xm.valid(global))
@@ -1968,7 +1542,7 @@ void Simulation::setupSaturationEqns(double dt)
 				if (neighbor_zm.valid(global))
 					set_link(neighbor_zm, -(flux_z[idx] + flux_z[neighbor_zm]) / 2.0);
 
-				// E. Insert local coefficients into PETSc
+				// Insert local coefficients into PETSc
 				MatSetValue(coeff_mat, arridx, arridx, coeff_self, ADD_VALUES);
 				VecSetValue(sources_vec, arridx, explicit_rhs, ADD_VALUES);
 			}
@@ -1986,29 +1560,27 @@ void Simulation::solveSaturation()
 	PetscInt its;
 	KSPConvergedReason reason;
 
-	// 1. Point the PETSc vector wrapper directly to the C++ Saturation array
+	// Point the PETSc vector wrapper directly to the C++ Saturation array
 	VecPlaceArray(solution_vec, saturation.getData().get() + saturation.pad_size);
 
-	// 2. Execute the Implicit Matrix Solve
+	// Execute the Implicit Matrix Solve
 	KSPReset(ksp);
 	KSPSetOperators(ksp, coeff_mat, coeff_mat);
 	KSPSolve(ksp, sources_vec, solution_vec);
 
-	// 3. Extract un-clamped Min/Max for logging
+	// Extract un-clamped min/max for logging
 	PetscInt min_loc, max_loc;
 	PetscReal min_val, max_val;
 	VecMin(solution_vec, &min_loc, &min_val);
 	VecMax(solution_vec, &max_loc, &max_val);
 
-	// 4. Un-link the PETSc memory
+	// Unlink the PETSc memory
 	VecResetArray(solution_vec);
 
 	KSPGetIterationNumber(ksp, &its);
 	KSPGetConvergedReason(ksp, &reason);
 
-	// =================================================================
-	// 5. Thermodynamic Clamp (Prevent Numerical Undershoot/Overshoot)
-	// =================================================================
+	// Thermodynamic clamp (prevent numerical undershoot/overshoot)
 	for (int k = local.origin.k; k < (local.origin.k + local.extent.k); ++k)
 	{
 		for (int j = local.origin.j; j < (local.origin.j + local.extent.j); ++j)
@@ -2022,9 +1594,8 @@ void Simulation::solveSaturation()
 			}
 		}
 	}
-	// =================================================================
 
-	// 6. Output Solver Statistics
+	// Output Solver Statistics
 	if (mpi_rank == 0)
 	{
 		if (reason > 0)
@@ -2038,72 +1609,6 @@ void Simulation::solveSaturation()
 		}
 	}
 }
-
-// /*
-// void Simulation::updateSaturation(double dt)
-// {
-//    // A temporary field to store the new saturation values before updating the main one.
-//    MPIDomain<double, 1, IDX_SCHEME> saturation_new;
-//    saturation_new.setup(local.origin, local.extent);
-
-//    const double porosity = 0.1; // This should be a configurable parameter
-//    const double dt_over_phi = dt / porosity;
-
-//    // Loop through the interior of the local domain
-//    for (int k = local.origin.k; k < (local.origin.k + local.extent.k); ++k)
-//    {
-// 	   for (int j = local.origin.j; j < (local.origin.j + local.extent.j); ++j)
-// 	   {
-// 		   for (int i = local.origin.i; i < (local.origin.i + local.extent.i); ++i)
-// 		   {
-// 			   Index idx(i, j, k);
-
-// 			   //// Approximate flux at the faces between voxels by averaging cell-centered values
-// 			   // double q_face_xp = (flux_x[idx] + flux_x[Index(i + 1, j, k)]) / 2.0;
-// 			   // double q_face_xm = (flux_x[idx] + flux_x[Index(i - 1, j, k)]) / 2.0;
-// 			   // double q_face_yp = (flux_y[idx] + flux_y[Index(i, j + 1, k)]) / 2.0;
-// 			   // double q_face_ym = (flux_y[idx] + flux_y[Index(i, j - 1, k)]) / 2.0;
-// 			   // double q_face_zp = (flux_z[idx] + flux_z[Index(i, j, k + 1)]) / 2.0;
-// 			   // double q_face_zm = (flux_z[idx] + flux_z[Index(i, j, k - 1)]) / 2.0;
-
-// 			   // Add boundary checks for all neighbor accesses ---
-// 			   // +X face
-// 			   Index neighbor_xp(i + 1, j, k);
-// 			   double q_face_xp = neighbor_xp.valid(global) ? (flux_x[idx] + flux_x[neighbor_xp]) / 2.0 : 0.0;
-// 			   // -X face
-// 			   Index neighbor_xm(i - 1, j, k);
-// 			   double q_face_xm = neighbor_xm.valid(global) ? (flux_x[idx] + flux_x[neighbor_xm]) / 2.0 : 0.0;
-
-// 			   // +Y face
-// 			   Index neighbor_yp(i, j + 1, k);
-// 			   double q_face_yp = neighbor_yp.valid(global) ? (flux_y[idx] + flux_y[neighbor_yp]) / 2.0 : 0.0;
-// 			   // -Y face
-// 			   Index neighbor_ym(i, j - 1, k);
-// 			   double q_face_ym = neighbor_ym.valid(global) ? (flux_y[idx] + flux_y[neighbor_ym]) / 2.0 : 0.0;
-
-// 			   // +Z face
-// 			   Index neighbor_zp(i, j, k + 1);
-// 			   double q_face_zp = neighbor_zp.valid(global) ? (flux_z[idx] + flux_z[neighbor_zp]) / 2.0 : 0.0;
-// 			   // -Z face
-// 			   Index neighbor_zm(i, j, k - 1);
-// 			   double q_face_zm = neighbor_zm.valid(global) ? (flux_z[idx] + flux_z[neighbor_zm]) / 2.0 : 0.0;
-
-// 			   // Calculate the divergence of the flux vector using a central difference
-// 			   double div_q = ((q_face_xp - q_face_xm) + (q_face_yp - q_face_ym) + (q_face_zp - q_face_zm)) / dx;
-
-// 			   // Update saturation using the explicit time-step formula: S_new = S_old - (dt/phi) * div(q)
-// 			   double new_sat = saturation[idx] - dt_over_phi * div_q;
-
-// 			   // Clamp the result to the physical bounds [0, 1]
-// 			   saturation_new[idx] = std::max(0.0, std::min(1.0, new_sat));
-// 		   }
-// 	   }
-//    }
-
-//    // Atomically swap the new data into the main saturation field
-//    saturation.take(saturation_new.getData());
-// }
-// */
 
 /**
  * @brief Models precipitation at the surface due to evaporation.
@@ -2146,8 +1651,8 @@ void Simulation::handleSurfaceEffects()
 					// If it's a surface voxel, apply the precipitation effect
 					if (is_surface_voxel)
 					{
-						conc[idx] = 1.0;	  // Set concentration to maximum (saturated)
-						img_data[idx] = Rock; // Clog the pore with precipitate
+						conc[idx] = 1.0;			 // Set concentration to maximum (saturated)
+						img_data[idx] = Precipitate; // Clog the pore with precipitate
 					}
 				}
 			}
@@ -2229,7 +1734,7 @@ void Simulation::solveAcid()
 	VecMin(solution_vec, &min_loc, &min_val);
 	VecMax(solution_vec, &max_loc, &max_val);
 
-	// Un-link the memory
+	// Unlink the memory
 	VecResetArray(solution_vec);
 
 	KSPGetIterationNumber(ksp, &its);

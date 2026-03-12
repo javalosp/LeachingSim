@@ -69,15 +69,9 @@ typedef std::unique_ptr<RAWType[]> pRAWType;
 
 enum PixelType
 {
-	// Numbering starting from 0
-	// Rock = 2,
-	// Air = 0,
-	// Pore = 1,
-	// Sulphide = 3
-
 	// These are the actual labels from CT scan .raw files
-	Rock = 3,
 	Air = 1,
+	Rock = 3,
 	Pore = 2,
 	Sulphide = 4,
 	// Secondary mineral formation

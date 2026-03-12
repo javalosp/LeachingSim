@@ -75,6 +75,7 @@ int main(int argc, char *argv[])
 		the_simulation.theta = cmd["theta"].as<double>();
 		the_simulation.use_instant_precipitation = cmd["instant_precip"].as<bool>();
 		the_simulation.porosity = cmd["porosity"].as<double>();
+		the_simulation.use_implicit_saturation = cmd["implicit_sat"].as<bool>();
 
 		// Initialise some constants
 		the_simulation.vg_n = 2.0; // Must be strictly > 1.0
@@ -220,6 +221,7 @@ int main(int argc, char *argv[])
 			std::cout << "  Time step (dt)                   : " << dt_user << " s" << std::endl;
 			std::cout << "  Time discretisation (Theta)      : " << the_simulation.theta << std::endl;
 			std::cout << "  Precipitation mode               : " << (the_simulation.use_instant_precipitation ? "True (Instant)" : "False (Gradual)") << std::endl;
+			std::cout << "  Saturation Solver                : " << (the_simulation.use_implicit_saturation ? "Implicit (PETSc)" : "Explicit (Sub-stepping)") << std::endl;
 			std::cout << "==================================================\n"
 					  << std::endl;
 		}

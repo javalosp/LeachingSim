@@ -114,7 +114,7 @@ void Simulation::setupReactionRates()
 			for (int i = local.origin.i; i < (local.origin.i + local.extent.i); ++i)
 			{
 				RAWType voxel = img_data[Index(i, j, k)];
-				if (voxel >= Sulphide && voxel > max_grain_id)
+				if (voxel == Sulphide && voxel > max_grain_id)
 					max_grain_id = voxel;
 			}
 	int tmp;
@@ -213,7 +213,7 @@ void Simulation::initProperties()
 					double log_k_eff = (p_frac * log_k_rock) + ((1.0 - p_frac) * log_k_pore);
 					K_intrinsic = std::pow(10.0, log_k_eff);
 				}
-				else if (type >= Sulphide)
+				else if (type == Sulphide)
 				{
 					double f = frac[idx];
 
@@ -251,7 +251,7 @@ void Simulation::initFrac()
 			for (int i = local.origin.i; i < (local.origin.i + local.extent.i); ++i)
 			{
 				Index idx(i, j, k);
-				frac[idx] = (img_data[idx] >= Sulphide) ? 1.0 : 0.0;
+				frac[idx] = (img_data[idx] == Sulphide) ? 1.0 : 0.0;
 			}
 }
 
@@ -300,7 +300,7 @@ int Simulation::updateFrac(double dt)
 			for (int i = local.origin.i; i < (local.origin.i + local.extent.i); ++i)
 			{
 				Index idx(i, j, k);
-				if (img_data[idx] >= Sulphide)
+				if (img_data[idx] == Sulphide)
 				{
 					double flux_sum = 0.0;
 
@@ -349,7 +349,7 @@ int Simulation::updateFrac(double dt)
 	// Use a double for the ceiling calculation, then cap it, then cast it.
 	double calculated_steps = std::ceil(dt / dt_safe);
 	int num_steps = 1;
-	if (num_steps > 1000)
+	if (calculated_steps > 1000)
 	{
 		num_steps = 1000; // Hard cap to prevent infinite loops
 	}
@@ -514,8 +514,8 @@ void Simulation::setupPressureEqns()
 				int arridx = idx.arrayId(global);
 				RAWType voxel_type = img_data[idx];
 
-				// Set values the linear system (Ax = b) as 1*P=0 for air, rock and sulphide voxels
-				if (voxel_type == Air || voxel_type == Rock || voxel_type >= Sulphide)
+				// Set values the linear system (Ax = b) as 1*P=0 for air, rock, sulphide, and precipitate voxels
+				if (voxel_type == Air || voxel_type == Rock || voxel_type == Sulphide || voxel_type == Precipitate)
 				{
 					// Force the diagonal to 1.0 to prevent PETSc divide by zero crashes
 					MatSetValue(coeff_mat, arridx, arridx, 1.0, ADD_VALUES);
@@ -750,7 +750,6 @@ void Simulation::calculateFlux()
  *
  * @param dt The current time step size (s), used for the time-derivative term.
  */
-// void Simulation::setupConcentrationEqns(double dt)
 void Simulation::setupConcentrationEqns(double dt, MPIDomain<double, 1, IDX_SCHEME> &field, double inlet_bc, double sulphide_bc)
 {
 	MatDestroy(&coeff_mat);
@@ -772,6 +771,14 @@ void Simulation::setupConcentrationEqns(double dt, MPIDomain<double, 1, IDX_SCHE
 				int arridx = idx.arrayId(global);
 				RAWType voxel_type = img_data[idx];
 
+				if (voxel_type == Rock || voxel_type == Precipitate || voxel_type == Sulphide)
+				{
+					flux_x[idx] = 0.0;
+					flux_y[idx] = 0.0;
+					flux_z[idx] = 0.0;
+					continue;
+				}
+
 				// Set values the linear system (Ax = b) for air, sulphide and rock voxels
 				if (voxel_type == Air)
 				{
@@ -781,7 +788,7 @@ void Simulation::setupConcentrationEqns(double dt, MPIDomain<double, 1, IDX_SCHE
 					VecSetValue(sources_vec, arridx, inlet_bc, ADD_VALUES);
 					continue;
 				}
-				else if (voxel_type >= Sulphide)
+				else if (voxel_type == Sulphide)
 				{
 					// Sulphide voxels act as a saturated source (C = 1.0)
 					MatSetValue(coeff_mat, arridx, arridx, 1.0, ADD_VALUES);
@@ -789,11 +796,10 @@ void Simulation::setupConcentrationEqns(double dt, MPIDomain<double, 1, IDX_SCHE
 					VecSetValue(sources_vec, arridx, sulphide_bc, ADD_VALUES);
 					continue;
 				}
-				else if (voxel_type == Rock)
+				else if (voxel_type == Rock || voxel_type == Precipitate)
 				{
-					// Rock is impermeable; it retains its current concentration
+					// Rock & Precipitate are impermeable; they retain their current concentration
 					MatSetValue(coeff_mat, arridx, arridx, 1.0, ADD_VALUES);
-					// VecSetValue(sources_vec, arridx, conc[idx], ADD_VALUES);
 					VecSetValue(sources_vec, arridx, field[idx], ADD_VALUES);
 					continue;
 				}
@@ -1122,11 +1128,14 @@ void Simulation::writeVTKFile(std::string fname_root, size_t tstep, size_t data_
 				  << nan_count_pressure << " Pressure NaNs and "
 				  << nan_count_cap << " CapPressure NaNs from boundary padding." << std::endl;
 	}
+	/*
+	// This is for debugging
 	else
 	{
 		std::cout << "    [VTK Writer Rank " << mpi_rank << "] checked "
 				  << " No NaN values found." << std::endl;
 	}
+	*/
 
 	size_t count = 0;
 	for (int k = local.origin.k; k < (local.origin.k + local.extent.k); ++k)
@@ -1182,7 +1191,7 @@ void Simulation::initSaturation()
 			{
 				Index idx(i, j, k);
 				RAWType voxel_type = img_data[idx];
-				if (voxel_type == Pore || voxel_type >= Sulphide)
+				if (voxel_type == Pore || voxel_type == Sulphide)
 				{
 					saturation[idx] = 1.0;
 				}
@@ -1206,7 +1215,7 @@ void Simulation::updateCapillaryPressure()
 			for (int i = local.origin.i; i < (local.origin.i + local.extent.i); ++i)
 			{
 				Index idx(i, j, k);
-				if (img_data[idx] == Pore || img_data[idx] >= Sulphide)
+				if (img_data[idx] == Pore || img_data[idx] == Sulphide)
 				{
 					// Calculate effective saturation, Se, ensuring it's within a valid range
 					double Se = (saturation[idx] - s_res) / (1.0 - s_res);
@@ -1244,7 +1253,7 @@ void Simulation::updateRelativePermeability()
 			for (int i = local.origin.i; i < (local.origin.i + local.extent.i); ++i)
 			{
 				Index idx(i, j, k);
-				if (img_data[idx] == Pore || img_data[idx] >= Sulphide)
+				if (img_data[idx] == Pore || img_data[idx] == Sulphide)
 				{
 					// Calculate effective saturation, Se
 					double Se = (saturation[idx] - s_res) / (1.0 - s_res);
@@ -1286,6 +1295,11 @@ void Simulation::updateSaturation(double dt)
 			for (int i = local.origin.i; i < (local.origin.i + local.extent.i); ++i)
 			{
 				Index idx(i, j, k);
+				RAWType voxel_type = img_data[idx];
+				if (voxel_type == Air || voxel_type == Rock || voxel_type == Sulphide || voxel_type == Precipitate)
+				{
+					continue;
+				}
 
 				Index neighbor_xp(i + 1, j, k);
 				double q_face_xp = neighbor_xp.valid(global) ? (flux_x[idx] + flux_x[neighbor_xp]) / 2.0 : 0.0;
@@ -1348,7 +1362,12 @@ void Simulation::updateSaturation(double dt)
 	// Use a double for the ceiling calculation, then cap it, then cast it.
 	double calculated_steps = std::ceil(dt / dt_safe);
 	int num_steps = 1;
-	if (num_steps > 1000)
+	// Check for Infinity or NaN just in case dt_safe is 0.0
+	if (std::isinf(calculated_steps) || std::isnan(calculated_steps))
+	{
+		num_steps = 1000;
+	}
+	else if (calculated_steps > 1000)
 	{
 		num_steps = 1000; // Hard cap
 	}
@@ -1385,6 +1404,11 @@ void Simulation::updateSaturation(double dt)
 				for (int i = local.origin.i; i < (local.origin.i + local.extent.i); ++i)
 				{
 					Index idx(i, j, k);
+					RAWType voxel_type = img_data[idx];
+					if (voxel_type == Air || voxel_type == Rock || voxel_type == Sulphide || voxel_type == Precipitate)
+					{
+						continue;
+					}
 
 					Index neighbor_xp(i + 1, j, k);
 					double q_face_xp = neighbor_xp.valid(global) ? (flux_x[idx] + flux_x[neighbor_xp]) / 2.0 : 0.0;
@@ -1467,8 +1491,8 @@ void Simulation::setupSaturationEqns(double dt)
 				int arridx = idx.arrayId(global);
 				RAWType voxel_type = img_data[idx];
 
-				// Inactive Regions (Rock, Air, Sulphide)
-				if (voxel_type == Air || voxel_type == Rock || voxel_type >= Sulphide)
+				// Inactive Regions (Rock, Air, Sulphide, Precipitate)
+				if (voxel_type == Air || voxel_type == Rock || voxel_type == Sulphide || voxel_type == Precipitate)
 				{
 					// These boundaries maintain their current saturation state
 					MatSetValue(coeff_mat, arridx, arridx, 1.0, ADD_VALUES);

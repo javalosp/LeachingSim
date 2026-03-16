@@ -16,16 +16,21 @@ cat $PBS_NODEFILE
 
 # Run MPI with error redirection
 # 2>&1 redirects stderr (2) to stdout (1), so both go into the log file.
-mpiexec ./release/LeachingSim_uint8 \
+mpiexec -n 128 --oversubscribe ./release/LeachingSim_uint8 \
        --raw-file LA3_d0_v1_uint8_unnormalised_338_338_283.raw \
        --xext 338 \
        --yext 338 \
        --zext 283 \
-       --dt 0.005 \
-       --tmax 10000.0 \
-       --nout 10 \
+       --csat 1.0 \
+       --theta 1.0 \
+       --dt 3600.0 \
+       --tmax 1728000.0 \
+       --nout 1 \
        --D 0.0000001 \
        --kreac 1000 \
        --voxel_size 0.000017 \
-       --out_dir ./output \
-       > simulation_log 2>&1
+       --top_pressure 10000.0 \
+       --evap_flux 0.0 \
+       --implicit_sat true \
+       --out_dir ./agglomerate_leaching_test_output \
+       > agglomerate_leaching_test_log 2>&1

@@ -46,7 +46,8 @@ mpiexec -n 10 --oversubscribe ./release/LeachingSim_uint8 \
        --D 1.0 \
        --kreac 1.0e-4 \
        --voxel_size 1.0 \
-       --top_pressure 100000 \
+       --top_pressure 10000 \
        --evap_flux 0.0 \
-       --out_dir ./leaching_test_output \
-       > leaching_test.log 2>&1
+       --chk_freq 50 \
+       --out_dir ./checkpoint_leaching_test_output \
+       > checkpoint_leaching_test.log 2>&1

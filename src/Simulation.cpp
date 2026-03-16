@@ -610,7 +610,7 @@ void Simulation::setupPressureEqns()
  * @brief Calls the PETSc solver to solve the linear system for pressure.
  * * The solution is written directly into the 'pressure' data field.
  */
-void Simulation::solvePressure()
+bool Simulation::solvePressure()
 {
 	PetscInt its;
 	KSPConvergedReason reason;
@@ -633,12 +633,20 @@ void Simulation::solvePressure()
 			cout << "    [Pressure] Converged in " << its << " iterations. (Reason Code: " << reason << ")" << endl;
 			// Print the exact bounds of the pressure field
 			cout << "    [Pressure] Min Value: " << min_val << " Pa | Max Value: " << max_val << " Pa" << endl;
+			return true
 		}
 		else
 		{
 			cout << "    [Pressure] DIVERGED/FAILED in " << its << " iterations! (Error Code: " << reason << ")" << endl;
+			// Instead of aborting, send a flag for adapting the time step
+			// MPI_Abort(PETSC_COMM_WORLD, 1);
+			return false
 		}
 	}
+	// Ensure all MPI ranks return the same success status based on rank 0's evaluation
+	int success = (reason > 0) ? 1 : 0;
+	MPI_Bcast(&success, 1, MPI_INT, 0, PETSC_COMM_WORLD);
+	return success == 1;
 }
 
 /**
@@ -874,7 +882,7 @@ void Simulation::setupConcentrationEqns(double dt, MPIDomain<double, 1, IDX_SCHE
  * @brief Calls the PETSc solver to solve the linear system for concentration.
  * * The solution is written directly into the 'conc' data field.
  */
-void Simulation::solveConc()
+bool Simulation::solveConc()
 {
 	PetscInt its;
 	KSPConvergedReason reason;
@@ -899,12 +907,20 @@ void Simulation::solveConc()
 			cout << "    [Concentration] Converged in " << its << " iterations. (Reason Code: " << reason << ")" << endl;
 			// Print the exact bounds of the concentration field
 			cout << "    [Concentration] Min Value: " << min_val << " Pa | Max Value: " << max_val << " Pa" << endl;
+			return true
 		}
 		else
 		{
 			cout << "    [Concentration] DIVERGED/FAILED in " << its << " iterations! (Error Code: " << reason << ")" << endl;
+			// Instead of aborting, send a flag for adapting the time step
+			// MPI_Abort(PETSC_COMM_WORLD, 1);
+			return false
 		}
 	}
+	// Ensure all MPI ranks return the same success status based on rank 0's evaluation
+	int success = (reason > 0) ? 1 : 0;
+	MPI_Bcast(&success, 1, MPI_INT, 0, PETSC_COMM_WORLD);
+	return success == 1;
 }
 
 /**
@@ -1579,7 +1595,7 @@ void Simulation::setupSaturationEqns(double dt)
 	VecAssemblyEnd(sources_vec);
 }
 
-void Simulation::solveSaturation()
+bool Simulation::solveSaturation()
 {
 	PetscInt its;
 	KSPConvergedReason reason;
@@ -1626,12 +1642,20 @@ void Simulation::solveSaturation()
 		{
 			std::cout << "    [Implicit Saturation] Converged in " << its << " iterations. (Reason Code: " << reason << ")" << std::endl;
 			std::cout << "    [Implicit Saturation] Raw Min: " << min_val << " | Raw Max: " << max_val << std::endl;
+			return true
 		}
 		else
 		{
 			std::cout << "    [Implicit Saturation] DIVERGED/FAILED in " << its << " iterations. (Error Code: " << reason << ")" << std::endl;
+			// Instead of aborting, send a flag for adapting the time step
+			// MPI_Abort(PETSC_COMM_WORLD, 1);
+			return false
 		}
 	}
+	// Ensure all MPI ranks return the same success status based on rank 0's evaluation
+	int success = (reason > 0) ? 1 : 0;
+	MPI_Bcast(&success, 1, MPI_INT, 0, PETSC_COMM_WORLD);
+	return success == 1;
 }
 
 /**
@@ -1740,7 +1764,7 @@ void Simulation::handlePrecipitation()
 	}
 }
 
-void Simulation::solveAcid()
+bool Simulation::solveAcid()
 {
 	PetscInt its;
 	KSPConvergedReason reason;
@@ -1770,12 +1794,20 @@ void Simulation::solveAcid()
 		{
 			cout << "    [Acid Transport] Converged in " << its << " iterations. (Reason Code: " << reason << ")" << endl;
 			cout << "    [Acid Transport] Min Value: " << min_val << " | Max Value: " << max_val << endl;
+			return true
 		}
 		else
 		{
 			cout << "    [Acid Transport] DIVERGED/FAILED in " << its << " iterations. (Error Code: " << reason << ")" << endl;
+			// Instead of aborting, send a flag for adapting the time step
+			// MPI_Abort(PETSC_COMM_WORLD, 1);
+			return false
 		}
 	}
+	// Ensure all MPI ranks return the same success status based on rank 0's evaluation
+	int success = (reason > 0) ? 1 : 0;
+	MPI_Bcast(&success, 1, MPI_INT, 0, PETSC_COMM_WORLD);
+	return success == 1;
 }
 
 /**
@@ -1859,4 +1891,42 @@ void Simulation::loadCheckpoint(std::string out_dir, int step)
 	{
 		std::cout << "    [Checkpoint] Successfully loaded binary state from step " << step << std::endl;
 	}
+}
+
+/*
+copy the 7 primary arrays into the backup vectors before the time step begins, and restore them if the step fails.
+*/
+void Simulation::saveState()
+{
+	size_t total_size = pressure.padded.extent.size();
+
+	// using std::vector.assign()
+	backup_img_data.assign(img_data.getData().get(), img_data.getData().get() + total_size);
+	backup_frac.assign(frac.getData().get(), frac.getData().get() + total_size);
+	backup_precipitate.assign(precipitate_inventory.getData().get(), precipitate_inventory.getData().get() + total_size);
+	backup_saturation.assign(saturation.getData().get(), saturation.getData().get() + total_size);
+	backup_pressure.assign(pressure.getData().get(), pressure.getData().get() + total_size);
+	backup_conc.assign(conc.getData().get(), conc.getData().get() + total_size);
+	backup_conc_acid.assign(conc_acid.getData().get(), conc_acid.getData().get() + total_size);
+}
+
+void Simulation::restoreState()
+{
+	size_t total_size = pressure.padded.extent.size();
+
+	// Copy the clean data back into the active simulation arrays
+	std::copy(backup_img_data.begin(), backup_img_data.end(), img_data.getData().get());
+	std::copy(backup_frac.begin(), backup_frac.end(), frac.getData().get());
+	std::copy(backup_precipitate.begin(), backup_precipitate.end(), precipitate_inventory.getData().get());
+	std::copy(backup_saturation.begin(), backup_saturation.end(), saturation.getData().get());
+	std::copy(backup_pressure.begin(), backup_pressure.end(), pressure.getData().get());
+	std::copy(backup_conc.begin(), backup_conc.end(), conc.getData().get());
+	std::copy(backup_conc_acid.begin(), backup_conc_acid.end(), conc_acid.getData().get());
+
+	// Rebuild the derived physics and MPI boundaries from the restored state
+	updateRelativePermeability();
+	updateCapillaryPressure();
+	initProperties();
+	doExchange();
+	permeability.exchangePadding(MPI_DOUBLE);
 }

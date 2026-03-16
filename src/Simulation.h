@@ -56,14 +56,27 @@ public:
 
 	// Solvers for Dynamic Model
 	void setupPressureEqns();
-	void solvePressure();
 	// void setupConcentrationEqns(double dt);
 	void setupConcentrationEqns(double dt, MPIDomain<double, 1, IDX_SCHEME> &field, double inlet_bc, double sulphide_bc);
 	void setupSaturationEqns(double dt);
-	void solveSaturation();
-	void solveConc();
 	void calculateFlux();
-	void solveAcid();
+
+	bool solveAcid();
+	bool solvePressure();
+	bool solveSaturation();
+	bool solveConc();
+
+	// Backup/Restore functions for "adaptive time-stepping"
+	void saveState();
+	void restoreState();
+	// backup buffers for "adaptive time-stepping"
+	std::vector<RAWType> backup_img_data;
+	std::vector<float> backup_frac;
+	std::vector<double> backup_precipitate;
+	std::vector<double> backup_saturation;
+	std::vector<double> backup_pressure;
+	std::vector<double> backup_conc;
+	std::vector<double> backup_conc_acid;
 
 	// Checkpoint/restart functions
 	void writeCheckpoint(std::string out_dir, int step);

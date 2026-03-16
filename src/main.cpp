@@ -232,6 +232,24 @@ int main(int argc, char *argv[])
 			boost::filesystem::create_directories(out_dir); // create output directory
 			cout << "\n*** Starting Simulation ***" << endl;
 		}
+
+		// TEMPORAL RAMPING SETUP
+		double dt_target = dt_actual;
+		double current_dt = dt_target;
+		// TODO: Change this to a cmd option
+		bool use_ramping = true;
+
+		if (use_ramping && start_step == 0) // Only ramp on a fresh start, not restarts
+		{
+			current_dt = std::min(60.0, dt_target); // Start with a 60-second step
+			if (mpi_rank == 0)
+				cout << "Temporal Ramping Enabled: Starting at dt = " << current_dt << "s" << endl;
+		}
+
+		// TIME TRACKING VECTORS FOR PARAVIEW
+		std::vector<double> history_t;
+		std::vector<size_t> history_n;
+
 		do
 		{
 			if (mpi_rank == 0)
@@ -267,13 +285,13 @@ int main(int argc, char *argv[])
 				if (the_simulation.use_implicit_saturation)
 				{
 					// 1-Step Implicit Solver (No sub-stepping limits)
-					the_simulation.setupSaturationEqns(dt_actual);
+					the_simulation.setupSaturationEqns(current_dt);
 					the_simulation.solveSaturation();
 				}
 				else
 				{
 					// Explicit sub-stepping solver (CFL limited)
-					the_simulation.updateSaturation(dt_actual);
+					the_simulation.updateSaturation(current_dt);
 				}
 				// Exchange saturation so the next Picard iteration or transport step (at last Picard iteration) is synced
 				the_simulation.saturation.exchangePadding(MPI_DOUBLE);
@@ -283,12 +301,12 @@ int main(int argc, char *argv[])
 			the_simulation.handleSurfaceEffects();
 
 			// Dissolved mineral transport (conc)
-			the_simulation.setupConcentrationEqns(dt_actual, the_simulation.conc, 0.0, 1.0);
+			the_simulation.setupConcentrationEqns(current_dt, the_simulation.conc, 0.0, 1.0);
 			the_simulation.solveConc();
 			the_simulation.conc.exchangePadding(MPI_DOUBLE);
 
 			// Acid transport (conc_acid)
-			the_simulation.setupConcentrationEqns(dt_actual, the_simulation.conc_acid, 1.0, 0.0);
+			the_simulation.setupConcentrationEqns(current_dt, the_simulation.conc_acid, 1.0, 0.0);
 			the_simulation.solveAcid();
 			the_simulation.conc_acid.exchangePadding(MPI_DOUBLE);
 
@@ -303,7 +321,7 @@ int main(int argc, char *argv[])
 #endif
 
 			// Update remaining reactive fraction
-			int leached_this_step = the_simulation.updateFrac(dt_actual);
+			int leached_this_step = the_simulation.updateFrac(current_dt);
 			int leached_total = 0;
 			MPI_Allreduce(&leached_this_step, &leached_total, 1, MPI_INT, MPI_SUM, PETSC_COMM_WORLD);
 
@@ -330,6 +348,33 @@ int main(int argc, char *argv[])
 									  VTKOutput::Permeability | VTKOutput::AcidConc;
 
 				the_simulation.writeVTKFile(out_dir + "/output", n, output_flags);
+
+				// Create a .pvd file for mapping time
+				// This is useful for tracking time correctly when using
+				// temporal ramping or "adaptive" timestepping
+				history_t.push_back(t);
+				history_n.push_back(n);
+
+				// TODO: Move this to Simulation.cpp
+
+				if (mpi_rank == 0)
+				{
+					std::ofstream pvd(out_dir + "/leaching_simulation.pvd");
+					pvd << "<?xml version=\"1.0\"?>\n";
+					pvd << "<VTKFile type=\"Collection\" version=\"0.1\" byte_order=\"LittleEndian\">\n";
+					pvd << "  <Collection>\n";
+
+					for (size_t i = 0; i < history_t.size(); ++i)
+					{
+						// Map the exact physical time to the corresponding .pvti file
+						pvd << "    <DataSet timestep=\"" << history_t[i]
+							<< "\" file=\"output_" << std::setw(6) << std::setfill('0') << history_n[i] << ".pvti\"/>\n";
+					}
+
+					pvd << "  </Collection>\n";
+					pvd << "</VTKFile>\n";
+					pvd.close();
+				}
 			}
 
 			// Checkpoint output
@@ -338,8 +383,27 @@ int main(int argc, char *argv[])
 				the_simulation.writeCheckpoint(out_dir, n);
 			}
 
-			t += dt_actual;
+			t += current_dt;
 			n++;
+
+			// ACCELERATE THE TIME STEP
+			if (use_ramping && current_dt < dt_target)
+			{
+				current_dt *= 1.5; // Grow the time step by 50% each iteration
+
+				if (current_dt > dt_target)
+				{
+					current_dt = dt_target; // Cap it strictly at the user's target
+					if (mpi_rank == 0)
+						cout << "    [Time Manager] Ramping complete. Reached target dt = " << dt_target << "s." << endl;
+				}
+				else
+				{
+					if (mpi_rank == 0)
+						cout << "    [Time Manager] Accelerating next dt to " << current_dt << "s." << endl;
+				}
+			}
+
 			if (mpi_rank == 0)
 				cout << "Done iteration. [" << leached_total << " voxels fully leached this step.]" << endl;
 

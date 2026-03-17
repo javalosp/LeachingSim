@@ -616,7 +616,17 @@ bool Simulation::solvePressure()
 	KSPConvergedReason reason;
 	VecPlaceArray(solution_vec, pressure.getData().get() + pressure.pad_size);
 	// KSPSetOperators(ksp, coeff_mat, coeff_mat, DIFFERENT_NONZERO_PATTERN);
+	KSPReset(ksp);
 	KSPSetOperators(ksp, coeff_mat, coeff_mat);
+
+	// Trigger the auditor if debug mode is on
+	if (debug_mode)
+	{
+		auditLinearSystem(coeff_mat, sources_vec, "Pressure Solver");
+	}
+
+	KSPSolve(ksp, sources_vec, solution_vec);
+
 	KSPSolve(ksp, sources_vec, solution_vec);
 	PetscInt min_loc, max_loc;
 	PetscReal min_val, max_val;
@@ -633,14 +643,14 @@ bool Simulation::solvePressure()
 			cout << "    [Pressure] Converged in " << its << " iterations. (Reason Code: " << reason << ")" << endl;
 			// Print the exact bounds of the pressure field
 			cout << "    [Pressure] Min Value: " << min_val << " Pa | Max Value: " << max_val << " Pa" << endl;
-			return true
+			// return true;
 		}
 		else
 		{
 			cout << "    [Pressure] DIVERGED/FAILED in " << its << " iterations! (Error Code: " << reason << ")" << endl;
 			// Instead of aborting, send a flag for adapting the time step
 			// MPI_Abort(PETSC_COMM_WORLD, 1);
-			return false
+			// return false;
 		}
 	}
 	// Ensure all MPI ranks return the same success status based on rank 0's evaluation
@@ -890,6 +900,15 @@ bool Simulation::solveConc()
 	KSPReset(ksp);
 	// KSPSetOperators(ksp, coeff_mat, coeff_mat, DIFFERENT_NONZERO_PATTERN);
 	KSPSetOperators(ksp, coeff_mat, coeff_mat);
+
+	// Trigger the auditor if debug mode is on
+	if (debug_mode)
+	{
+		auditLinearSystem(coeff_mat, sources_vec, "Concentration Solver");
+	}
+
+	KSPSolve(ksp, sources_vec, solution_vec);
+
 	KSPSolve(ksp, sources_vec, solution_vec);
 	PetscInt min_loc, max_loc;
 	PetscReal min_val, max_val;
@@ -907,14 +926,14 @@ bool Simulation::solveConc()
 			cout << "    [Concentration] Converged in " << its << " iterations. (Reason Code: " << reason << ")" << endl;
 			// Print the exact bounds of the concentration field
 			cout << "    [Concentration] Min Value: " << min_val << " Pa | Max Value: " << max_val << " Pa" << endl;
-			return true
+			// return true;
 		}
 		else
 		{
 			cout << "    [Concentration] DIVERGED/FAILED in " << its << " iterations! (Error Code: " << reason << ")" << endl;
 			// Instead of aborting, send a flag for adapting the time step
 			// MPI_Abort(PETSC_COMM_WORLD, 1);
-			return false
+			// return false;
 		}
 	}
 	// Ensure all MPI ranks return the same success status based on rank 0's evaluation
@@ -1606,6 +1625,15 @@ bool Simulation::solveSaturation()
 	// Execute the Implicit Matrix Solve
 	KSPReset(ksp);
 	KSPSetOperators(ksp, coeff_mat, coeff_mat);
+
+	// Trigger the auditor if debug mode is on
+	if (debug_mode)
+	{
+		auditLinearSystem(coeff_mat, sources_vec, "Implicit Saturation Solver");
+	}
+
+	KSPSolve(ksp, sources_vec, solution_vec);
+
 	KSPSolve(ksp, sources_vec, solution_vec);
 
 	// Extract un-clamped min/max for logging
@@ -1642,14 +1670,14 @@ bool Simulation::solveSaturation()
 		{
 			std::cout << "    [Implicit Saturation] Converged in " << its << " iterations. (Reason Code: " << reason << ")" << std::endl;
 			std::cout << "    [Implicit Saturation] Raw Min: " << min_val << " | Raw Max: " << max_val << std::endl;
-			return true
+			// return true;
 		}
 		else
 		{
 			std::cout << "    [Implicit Saturation] DIVERGED/FAILED in " << its << " iterations. (Error Code: " << reason << ")" << std::endl;
 			// Instead of aborting, send a flag for adapting the time step
 			// MPI_Abort(PETSC_COMM_WORLD, 1);
-			return false
+			// return false;
 		}
 	}
 	// Ensure all MPI ranks return the same success status based on rank 0's evaluation
@@ -1774,6 +1802,15 @@ bool Simulation::solveAcid()
 
 	KSPReset(ksp);
 	KSPSetOperators(ksp, coeff_mat, coeff_mat);
+
+	// Trigger the auditor if debug mode is on
+	if (debug_mode)
+	{
+		auditLinearSystem(coeff_mat, sources_vec, "Acid Solver");
+	}
+
+	KSPSolve(ksp, sources_vec, solution_vec);
+
 	KSPSolve(ksp, sources_vec, solution_vec);
 
 	// Extract min/max for logging and stability checking
@@ -1794,14 +1831,14 @@ bool Simulation::solveAcid()
 		{
 			cout << "    [Acid Transport] Converged in " << its << " iterations. (Reason Code: " << reason << ")" << endl;
 			cout << "    [Acid Transport] Min Value: " << min_val << " | Max Value: " << max_val << endl;
-			return true
+			// return true;
 		}
 		else
 		{
 			cout << "    [Acid Transport] DIVERGED/FAILED in " << its << " iterations. (Error Code: " << reason << ")" << endl;
 			// Instead of aborting, send a flag for adapting the time step
 			// MPI_Abort(PETSC_COMM_WORLD, 1);
-			return false
+			// return false;
 		}
 	}
 	// Ensure all MPI ranks return the same success status based on rank 0's evaluation
@@ -1929,4 +1966,40 @@ void Simulation::restoreState()
 	initProperties();
 	doExchange();
 	permeability.exchangePadding(MPI_DOUBLE);
+}
+
+void Simulation::auditLinearSystem(Mat A, Vec b, std::string label)
+{
+	// 1. Check if the Matrix is actually assembled
+	PetscBool assembled;
+	MatAssembled(A, &assembled);
+	if (!assembled)
+	{
+		std::cerr << "    [DEBUG FATAL] Rank " << mpi_rank << " | Matrix for " << label << " is NOT assembled before solve!" << std::endl;
+	}
+
+	// 2. Scan the RHS Vector for NaNs or Infinities
+	PetscReal norm;
+	VecNorm(b, NORM_2, &norm);
+	if (std::isnan(norm) || std::isinf(norm))
+	{
+		std::cerr << "    [DEBUG FATAL] Rank " << mpi_rank << " | NaN or Infinity detected in RHS Vector of " << label << "!" << std::endl;
+	}
+
+	// 3. (Optional) Check Matrix diagonal validity
+	// A strictly zero diagonal will crash GMRES/ILU solvers instantly
+	Vec diag;
+	MatCreateVecs(A, &diag, PETSC_NULLPTR);
+	MatGetDiagonal(A, diag);
+	PetscReal diag_norm;
+	VecNorm(diag, NORM_2, &diag_norm);
+	if (std::isnan(diag_norm) || std::isinf(diag_norm))
+	{
+		std::cerr << "    [DEBUG FATAL] Rank " << mpi_rank << " | NaN or Infinity detected in Matrix Diagonal of " << label << "!" << std::endl;
+	}
+	else if (diag_norm < 1e-12)
+	{
+		std::cerr << "    [DEBUG WARNING] Rank " << mpi_rank << " | Matrix Diagonal for " << label << " is dangerously close to zero (Norm: " << diag_norm << ")!" << std::endl;
+	}
+	VecDestroy(&diag);
 }

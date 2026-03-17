@@ -36,7 +36,7 @@ int main(int argc, char *argv[])
 
 		// Command line argument parsing
 		opts::options_description cmd_opts("Command line arguments");
-		cmd_opts.add_options()("help,h", "Print this message and exit.")("raw-file", opts::value<string>()->required(), "Input RAW file specifying the domain.")("xext", opts::value<int>()->required(), "The x extent of the domain")("yext", opts::value<int>()->required(), "The y extent of the domain")("zext", opts::value<int>()->required(), "The z extent of the domain")("out_dir", opts::value<string>()->default_value("./output"), "The output directory")("header_size", opts::value<size_t>()->default_value(0), "RAW file header size in bytes.")("voxel_size", opts::value<double>()->default_value(1.), "Size of voxels (m).")("D", opts::value<double>()->default_value(1.), "Diffusion constant (m^2/s).")("kext", opts::value<double>()->default_value(1.), "Mass transfer to exterior.")("kreac", opts::value<double>()->default_value(1.), "Reaction transfer from sulphide grains.")("Dpore_fac", opts::value<double>()->default_value(1.), "Pore diffusivity enhancement factor")("dt", opts::value<double>()->default_value(1.), "Simulation time step (s).")("tmax", opts::value<double>()->default_value(10.), "Maximum simulation time (s).")("nout", opts::value<int>()->default_value(1), "Output every N-th time step.")("seed", opts::value<size_t>()->default_value(42), "Pseudo-RNG seed value.")("csat", opts::value<double>()->default_value(0.95), "Saturation concentration limit.")("evap_flux", opts::value<double>()->default_value(0.0), "Evaporative flux (m/s)")("theta", opts::value<double>()->default_value(1.0), "Time scheme (0=Explicit, 0.5=Crank-Nicolson, 1.0=Implicit)")("instant_precip", opts::value<bool>()->default_value(false), "Enable instant pore blinding upon supersaturation")("porosity", opts::value<double>()->default_value(0.1), "Material porosity")("top_pressure", opts::value<double>()->default_value(10000.0), "Applied pressure head at the top boundary (Pa, simulates irrigation)")("max_cap_grad", opts::value<double>()->default_value(50000.0), "Maximum capillary pressure gradient (Pa/m) for explicit solver stability")("implicit_sat", opts::value<bool>()->default_value(false), "Toggle: True = Implicit PETSc Solver, False = Explicit Sub-stepping")("restart_step", opts::value<int>()->default_value(0), "Step to restart from (0 = fresh start)")("chk_freq", opts::value<int>()->default_value(1000), "Number of steps between saving binary checkpoints");
+		cmd_opts.add_options()("help,h", "Print this message and exit.")("raw-file", opts::value<string>()->required(), "Input RAW file specifying the domain.")("xext", opts::value<int>()->required(), "The x extent of the domain")("yext", opts::value<int>()->required(), "The y extent of the domain")("zext", opts::value<int>()->required(), "The z extent of the domain")("out_dir", opts::value<string>()->default_value("./output"), "The output directory")("header_size", opts::value<size_t>()->default_value(0), "RAW file header size in bytes.")("voxel_size", opts::value<double>()->default_value(1.), "Size of voxels (m).")("D", opts::value<double>()->default_value(1.), "Diffusion constant (m^2/s).")("kext", opts::value<double>()->default_value(1.), "Mass transfer to exterior.")("kreac", opts::value<double>()->default_value(1.), "Reaction transfer from sulphide grains.")("Dpore_fac", opts::value<double>()->default_value(1.), "Pore diffusivity enhancement factor")("dt", opts::value<double>()->default_value(1.), "Simulation time step (s).")("tmax", opts::value<double>()->default_value(10.), "Maximum simulation time (s).")("nout", opts::value<int>()->default_value(1), "Output every N-th time step.")("seed", opts::value<size_t>()->default_value(42), "Pseudo-RNG seed value.")("csat", opts::value<double>()->default_value(0.95), "Saturation concentration limit.")("evap_flux", opts::value<double>()->default_value(0.0), "Evaporative flux (m/s)")("theta", opts::value<double>()->default_value(1.0), "Time scheme (0=Explicit, 0.5=Crank-Nicolson, 1.0=Implicit)")("instant_precip", opts::value<bool>()->default_value(false), "Enable instant pore blinding upon supersaturation")("porosity", opts::value<double>()->default_value(0.1), "Material porosity")("top_pressure", opts::value<double>()->default_value(10000.0), "Applied pressure head at the top boundary (Pa, simulates irrigation)")("max_cap_grad", opts::value<double>()->default_value(50000.0), "Maximum capillary pressure gradient (Pa/m) for explicit solver stability")("implicit_sat", opts::value<bool>()->default_value(false), "Toggle: True = Implicit PETSc Solver, False = Explicit Sub-stepping")("restart_step", opts::value<int>()->default_value(0), "Step to restart from (0 = fresh start)")("chk_freq", opts::value<int>()->default_value(1000), "Number of steps between saving binary checkpoints")("debug", opts::value<bool>()->default_value(false), "Enable detailed runtime debugging and NaN checks");
 
 		/* Simluation cases can vary depending on some options values, e.g.
 		Leaching case
@@ -76,6 +76,7 @@ int main(int argc, char *argv[])
 		the_simulation.use_instant_precipitation = cmd["instant_precip"].as<bool>();
 		the_simulation.porosity = cmd["porosity"].as<double>();
 		the_simulation.use_implicit_saturation = cmd["implicit_sat"].as<bool>();
+		the_simulation.debug_mode = cmd["debug"].as<bool>();
 
 		// Initialise some constants
 		the_simulation.vg_n = 2.0; // Must be strictly > 1.0
@@ -222,6 +223,7 @@ int main(int argc, char *argv[])
 			std::cout << "  Time discretisation (Theta)      : " << the_simulation.theta << std::endl;
 			std::cout << "  Precipitation mode               : " << (the_simulation.use_instant_precipitation ? "True (Instant)" : "False (Gradual)") << std::endl;
 			std::cout << "  Saturation Solver                : " << (the_simulation.use_implicit_saturation ? "Implicit (PETSc)" : "Explicit (Sub-stepping)") << std::endl;
+			std::cout << "  Debug Mode                       : " << (the_simulation.debug_mode ? "True (Active)" : "False (Inactive)") << std::endl;
 			std::cout << "==================================================\n"
 					  << std::endl;
 		}
@@ -252,81 +254,145 @@ int main(int argc, char *argv[])
 
 		do
 		{
-			if (mpi_rank == 0)
-				cout << "\nIteration: " << n << " | Time: " << t << "s" << endl;
+			bool step_successful = false;
 
-			// Hydrodynamics (Picard iteration loop)
-			// If explicit use 1 pass, if implicit use 3 passes to converge non-linear physics.
-			int max_picard_iters = the_simulation.use_implicit_saturation ? 3 : 1;
-
-			for (int picard = 0; picard < max_picard_iters; ++picard)
+			// =================================================================
+			// THE ADAPTIVE TIME-STEPPING (RETRY) LOOP
+			// =================================================================
+			while (!step_successful)
 			{
-				if (mpi_rank == 0 && the_simulation.use_implicit_saturation)
-					cout << "    --- Picard Iteration " << picard + 1 << " ---" << endl;
+				// 1. Snapshot the memory before calculating any physics
+				the_simulation.saveState();
+				step_successful = true; // Assume success until proven otherwise
 
-				// Update physical properties based on the latest saturation and materials
-				the_simulation.updateRelativePermeability();
-				the_simulation.updateCapillaryPressure();
-				the_simulation.initProperties();
-				the_simulation.permeability.exchangePadding(MPI_DOUBLE);
+				if (mpi_rank == 0)
+					cout << "\nIteration: " << n << " | Time: " << t << "s | dt: " << current_dt << "s" << endl;
 
-				// Solve pressure using the updated effective permeability
-				the_simulation.setupPressureEqns();
-				the_simulation.solvePressure();
-				the_simulation.pressure.exchangePadding(MPI_DOUBLE);
+				// -------------------------------------------------------------
+				// A. Hydrodynamics (Picard iteration loop)
+				// -------------------------------------------------------------
+				int max_picard_iters = the_simulation.use_implicit_saturation ? 3 : 1;
 
-				// Calculate Darcy flux and exchange MPI boundaries
-				the_simulation.calculateFlux();
-				the_simulation.flux_x.exchangePadding(MPI_DOUBLE);
-				the_simulation.flux_y.exchangePadding(MPI_DOUBLE);
-				the_simulation.flux_z.exchangePadding(MPI_DOUBLE);
-
-				// Solve saturation using the updated flux
-				if (the_simulation.use_implicit_saturation)
+				for (int picard = 0; picard < max_picard_iters; ++picard)
 				{
-					// 1-Step Implicit Solver (No sub-stepping limits)
-					the_simulation.setupSaturationEqns(current_dt);
-					the_simulation.solveSaturation();
+					if (mpi_rank == 0 && the_simulation.use_implicit_saturation)
+						cout << "    --- Picard Iteration " << picard + 1 << " ---" << endl;
+
+					// Update properties and sync boundaries
+					the_simulation.updateRelativePermeability();
+					the_simulation.updateCapillaryPressure();
+					the_simulation.initProperties();
+					the_simulation.permeability.exchangePadding(MPI_DOUBLE);
+
+					// Solve pressure
+					the_simulation.setupPressureEqns();
+					if (!the_simulation.solvePressure())
+					{
+						step_successful = false;
+						break;
+					} // Abort Picard
+					the_simulation.pressure.exchangePadding(MPI_DOUBLE);
+
+					// Calculate fluxes
+					the_simulation.calculateFlux();
+					the_simulation.flux_x.exchangePadding(MPI_DOUBLE);
+					the_simulation.flux_y.exchangePadding(MPI_DOUBLE);
+					the_simulation.flux_z.exchangePadding(MPI_DOUBLE);
+
+					// Solve saturation
+					if (the_simulation.use_implicit_saturation)
+					{
+						the_simulation.setupSaturationEqns(current_dt);
+						if (!the_simulation.solveSaturation())
+						{
+							step_successful = false;
+							break;
+						} // Abort Picard
+					}
+					else
+					{
+						the_simulation.updateSaturation(current_dt);
+					}
+					the_simulation.saturation.exchangePadding(MPI_DOUBLE);
 				}
-				else
+
+				// -------------------------------------------------------------
+				// B. Post-Picard Physics (Only executes if hydrodynamics succeeded)
+				// -------------------------------------------------------------
+				if (step_successful)
 				{
-					// Explicit sub-stepping solver (CFL limited)
-					the_simulation.updateSaturation(current_dt);
+					the_simulation.handleSurfaceEffects();
+
+					// Dissolved mineral transport
+					the_simulation.setupConcentrationEqns(current_dt, the_simulation.conc, 0.0, 1.0);
+					if (!the_simulation.solveConc())
+					{
+						step_successful = false;
+					}
+					else
+					{
+						the_simulation.conc.exchangePadding(MPI_DOUBLE);
+					}
 				}
-				// Exchange saturation so the next Picard iteration or transport step (at last Picard iteration) is synced
-				the_simulation.saturation.exchangePadding(MPI_DOUBLE);
-			}
 
-			// Apply evaporation clogging after hydrodynamics have settled
-			the_simulation.handleSurfaceEffects();
+				if (step_successful)
+				{
+					// Acid transport
+					the_simulation.setupConcentrationEqns(current_dt, the_simulation.conc_acid, 1.0, 0.0);
+					if (!the_simulation.solveAcid())
+					{
+						step_successful = false;
+					}
+					else
+					{
+						the_simulation.conc_acid.exchangePadding(MPI_DOUBLE);
+					}
+				}
 
-			// Dissolved mineral transport (conc)
-			the_simulation.setupConcentrationEqns(current_dt, the_simulation.conc, 0.0, 1.0);
-			the_simulation.solveConc();
-			the_simulation.conc.exchangePadding(MPI_DOUBLE);
+				if (step_successful)
+				{
+					// Reactions and precipitation
+					the_simulation.handlePrecipitation();
 
-			// Acid transport (conc_acid)
-			the_simulation.setupConcentrationEqns(current_dt, the_simulation.conc_acid, 1.0, 0.0);
-			the_simulation.solveAcid();
-			the_simulation.conc_acid.exchangePadding(MPI_DOUBLE);
-
-			// Reactions and precipitation
-			the_simulation.handlePrecipitation();
-
-			// If precipitation alters the rock matrix, tell the neighbours
 #if DATA_TYPE == 16
-			the_simulation.img_data.exchangePadding(MPI_UNSIGNED_SHORT);
+					the_simulation.img_data.exchangePadding(MPI_UNSIGNED_SHORT);
 #elif DATA_TYPE == 8
-			the_simulation.img_data.exchangePadding(MPI_UNSIGNED_CHAR);
+					the_simulation.img_data.exchangePadding(MPI_UNSIGNED_CHAR);
 #endif
+					// Update remaining reactive fraction
+					int leached_this_step = the_simulation.updateFrac(current_dt);
+					int leached_total = 0;
+					MPI_Allreduce(&leached_this_step, &leached_total, 1, MPI_INT, MPI_SUM, PETSC_COMM_WORLD);
+					if (mpi_rank == 0)
+						cout << "Done iteration. [" << leached_total << " voxels fully leached this step.]" << endl;
+				}
 
-			// Update remaining reactive fraction
-			int leached_this_step = the_simulation.updateFrac(current_dt);
-			int leached_total = 0;
-			MPI_Allreduce(&leached_this_step, &leached_total, 1, MPI_INT, MPI_SUM, PETSC_COMM_WORLD);
+				// -------------------------------------------------------------
+				// C. The Retry Manager Trigger
+				// -------------------------------------------------------------
+				if (!step_successful)
+				{
+					if (mpi_rank == 0)
+						cout << "    [Retry Manager] Physics diverged! Rolling back memory and halving dt..." << endl;
+
+					the_simulation.restoreState(); // Wipe the garbage data
+					current_dt *= 0.5;			   // Cut the time step in half
+
+					// Hard limit to prevent infinite loops on irreversibly unstable matrices
+					if (current_dt < 1e-3)
+					{
+						if (mpi_rank == 0)
+							cout << "    [FATAL ERROR] Time step shrank below 1ms. Simulation is irreversibly unstable. Aborting." << endl;
+						MPI_Abort(PETSC_COMM_WORLD, 1);
+					}
+				}
+			} // End of Adaptive Retry Loop
+
+			// =================================================================
+			// OUTPUT AND TIME ADVANCEMENT
+			// =================================================================
 
 			// Property sync and file output
-			// Only update these properties if we are actually writing a file
 			if (n % cmd["nout"].as<int>() == 0)
 			{
 				if (mpi_rank == 0)
@@ -335,8 +401,6 @@ int main(int argc, char *argv[])
 				the_simulation.updateRelativePermeability();
 				the_simulation.updateCapillaryPressure();
 				the_simulation.initProperties();
-
-				// Execute the MPI exchange so the ParaView boundary stitching is seamless
 				the_simulation.permeability.exchangePadding(MPI_DOUBLE);
 
 				if (mpi_rank == 0)
@@ -349,13 +413,9 @@ int main(int argc, char *argv[])
 
 				the_simulation.writeVTKFile(out_dir + "/output", n, output_flags);
 
-				// Create a .pvd file for mapping time
-				// This is useful for tracking time correctly when using
-				// temporal ramping or "adaptive" timestepping
+				// PVD Time-tracking file
 				history_t.push_back(t);
 				history_n.push_back(n);
-
-				// TODO: Move this to Simulation.cpp
 
 				if (mpi_rank == 0)
 				{
@@ -366,7 +426,6 @@ int main(int argc, char *argv[])
 
 					for (size_t i = 0; i < history_t.size(); ++i)
 					{
-						// Map the exact physical time to the corresponding .pvti file
 						pvd << "    <DataSet timestep=\"" << history_t[i]
 							<< "\" file=\"output_" << std::setw(6) << std::setfill('0') << history_n[i] << ".pvti\"/>\n";
 					}
@@ -383,14 +442,16 @@ int main(int argc, char *argv[])
 				the_simulation.writeCheckpoint(out_dir, n);
 			}
 
+			// Fast-forward simulation time
 			t += current_dt;
 			n++;
 
-			// ACCELERATE THE TIME STEP
+			// ==========================================
+			// ACCELERATE THE TIME STEP (TEMPORAL RAMPING)
+			// ==========================================
 			if (use_ramping && current_dt < dt_target)
 			{
 				current_dt *= 1.5; // Grow the time step by 50% each iteration
-
 				if (current_dt > dt_target)
 				{
 					current_dt = dt_target; // Cap it strictly at the user's target
@@ -403,9 +464,6 @@ int main(int argc, char *argv[])
 						cout << "    [Time Manager] Accelerating next dt to " << current_dt << "s." << endl;
 				}
 			}
-
-			if (mpi_rank == 0)
-				cout << "Done iteration. [" << leached_total << " voxels fully leached this step.]" << endl;
 
 		} while (t < tmax);
 

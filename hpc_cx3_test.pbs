@@ -32,5 +32,6 @@ mpiexec -n 128 --oversubscribe ./release/LeachingSim_uint8 \
        --top_pressure 10000.0 \
        --evap_flux 0.0 \
        --implicit_sat true \
+       --debug true \
        --out_dir ./agglomerate_leaching_test_output \
        > agglomerate_leaching_test_log 2>&1

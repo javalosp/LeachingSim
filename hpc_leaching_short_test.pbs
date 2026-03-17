@@ -49,5 +49,7 @@ mpiexec -n 10 --oversubscribe ./release/LeachingSim_uint8 \
        --top_pressure 10000 \
        --evap_flux 0.0 \
        --chk_freq 50 \
+       --implicit_sat true \
+       --debug true \
        --out_dir ./checkpoint_leaching_test_output \
        > checkpoint_leaching_test.log 2>&1

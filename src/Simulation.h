@@ -78,6 +78,10 @@ public:
 	std::vector<double> backup_conc;
 	std::vector<double> backup_conc_acid;
 
+	// Debugging
+	bool debug_mode = false;
+	void auditLinearSystem(Mat A, Vec b, std::string label);
+
 	// Checkpoint/restart functions
 	void writeCheckpoint(std::string out_dir, int step);
 	void loadCheckpoint(std::string out_dir, int step);

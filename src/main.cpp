@@ -49,7 +49,10 @@ int main(int argc, char *argv[])
 		*/
 
 		opts::variables_map cmd;
-		opts::store(opts::parse_command_line(argc, argv, cmd_opts), cmd);
+		// opts::store(opts::parse_command_line(argc, argv, cmd_opts), cmd);
+		// Allow command line options not defined before
+		// This allos passing some PETSc options like preconditioners
+		opts::store(opts::command_line_parser(argc, argv).options(cmd_opts).allow_unregistered().run(), cmd);
 
 		if (cmd.count("help") && mpi_rank == 0)
 		{

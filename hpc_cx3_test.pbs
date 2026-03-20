@@ -16,6 +16,9 @@ cat $PBS_NODEFILE
 
 # Run MPI with error redirection
 # 2>&1 redirects stderr (2) to stdout (1), so both go into the log file.
+# Preconditioners:
+# -pc_type bjacobi -sub_pc_type ilu
+# -pc_type hypre -pc_hypre_type boomeramg
 mpiexec -n 128 --oversubscribe ./release/LeachingSim_uint8 \
        --raw-file LA3_d0_v1_uint8_unnormalised_338_338_283.raw \
        --xext 338 \
@@ -29,9 +32,10 @@ mpiexec -n 128 --oversubscribe ./release/LeachingSim_uint8 \
        --D 0.0000001 \
        --kreac 1000 \
        --voxel_size 0.000017 \
-       --top_pressure 10000.0 \
+       --top_pressure 10.0 \
        --evap_flux 0.0 \
        --implicit_sat true \
        --debug true \
        --out_dir ./agglomerate_leaching_test_output \
+       -pc_type bjacobi -sub_pc_type ilu \
        > agglomerate_leaching_test_log 2>&1

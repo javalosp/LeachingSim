@@ -33,7 +33,15 @@ cat $PBS_NODEFILE
 #		There is no downward push. 
 #		Evaporation pulls liquid volume out of the surface-connected pores and surface pores are converted into solid
 
-mpiexec -n 10 --oversubscribe ./release/LeachingSim_uint8 \
+# Preconditioners:
+# -pc_type bjacobi -sub_pc_type ilu -> FAILS!
+# -pc_type hypre -pc_hypre_type boomeramg
+# Using prefix for KSP options
+# -press_pc_type hypre -press_pc_hypre_type boomeramg
+#      > checkpoint_leaching_test.log 2>&1
+
+# We use 'stdbuf -oL -eL' to force the OS to write to the log line-by-line immediately
+stdbuf -oL -eL mpiexec -n 10 --oversubscribe ./release/LeachingSim_uint8 \
        --raw-file channel_test_input.raw \
        --xext 50 \
        --yext 50 \
@@ -51,5 +59,36 @@ mpiexec -n 10 --oversubscribe ./release/LeachingSim_uint8 \
        --chk_freq 50 \
        --implicit_sat true \
        --debug true \
-       --out_dir ./checkpoint_leaching_test_output \
-       > checkpoint_leaching_test.log 2>&1
+       --out_dir ./preconditioner_leaching_test_output \
+       -press_pc_type hypre \
+       -press_pc_hypre_type boomeramg \
+       -sat_pc_type jacobi \
+       -conc_pc_type jacobi \
+       -acid_pc_type jacobi \
+       -press_ksp_monitor \
+       -press_ksp_converged_reason \
+       > preconditioner_leaching_test.log 2>&1
+
+#mpiexec -n 10 --oversubscribe ./release/LeachingSim_uint8 \
+#       --raw-file channel_test_input.raw \
+#       --xext 50 \
+#       --yext 50 \
+#       --zext 50 \
+#       --csat 1.0 \
+#       --theta 1.0 \
+#       --dt 3600.0 \
+#       --tmax 864000.0 \
+#       --nout 1 \
+#       --D 1.0 \
+#       --kreac 1.0e-4 \
+#       --voxel_size 1.0 \
+#       --top_pressure 10000 \
+#       --evap_flux 0.0 \
+#       --chk_freq 50 \
+#       --implicit_sat true \
+#       --debug true \
+#       --out_dir ./preconditioner_leaching_test_output \
+#       -press_pc_type hypre \
+#       -press_pc_hypre_type boomeramg \
+#       -press_ksp_view \
+#       > preconditioner_leaching_test.log 2>&1

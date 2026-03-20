@@ -144,9 +144,15 @@ void Simulation::setupPETSc(bool zero_conc)
 	MatSetFromOptions(coeff_mat);
 	KSPCreate(PETSC_COMM_WORLD, &ksp);
 	KSPSetType(ksp, KSPGMRES);
+	// Ste prefixes for KSP options to allow passing solver options to each solve function
+	// Set a prefix for Pressure
+	KSPSetOptionsPrefix(ksp, "press_");
 	KSPGetPC(ksp, &pc);
 	// PCSetType(pc, PCSOR);
 	PCSetType(pc, PCJACOBI);
+	// PCSetType(pc, PCBJACOBI); // Block Jacobi
+	// PCSetType(pc, PCILU); // Incomplete LU
+
 	KSPSetTolerances(ksp, 1.e-6, PETSC_DEFAULT, PETSC_DEFAULT, 10000);
 	KSPSetInitialGuessNonzero(ksp, PETSC_TRUE);
 	KSPSetFromOptions(ksp);
@@ -180,7 +186,8 @@ void Simulation::initFields()
  */
 void Simulation::initProperties()
 {
-	const double pore_permeability = 1.0e-9;
+	// const double pore_permeability = 1.0e-9;
+	const double pore_permeability = 1.0e-12;
 	const double rock_permeability = 1.0e-18;
 
 	for (int k = local.origin.k; k < (local.origin.k + local.extent.k); ++k)
@@ -619,6 +626,10 @@ bool Simulation::solvePressure()
 	KSPReset(ksp);
 	KSPSetOperators(ksp, coeff_mat, coeff_mat);
 
+	// Switch to Pressure KSP options
+	KSPSetOptionsPrefix(ksp, "press_");
+	KSPSetFromOptions(ksp);
+
 	// Trigger the auditor if debug mode is on
 	if (debug_mode)
 	{
@@ -900,6 +911,10 @@ bool Simulation::solveConc()
 	KSPReset(ksp);
 	// KSPSetOperators(ksp, coeff_mat, coeff_mat, DIFFERENT_NONZERO_PATTERN);
 	KSPSetOperators(ksp, coeff_mat, coeff_mat);
+
+	// Switch to Concentration KSP options
+	KSPSetOptionsPrefix(ksp, "conc_");
+	KSPSetFromOptions(ksp);
 
 	// Trigger the auditor if debug mode is on
 	if (debug_mode)
@@ -1626,6 +1641,10 @@ bool Simulation::solveSaturation()
 	KSPReset(ksp);
 	KSPSetOperators(ksp, coeff_mat, coeff_mat);
 
+	// Switch to Saturation KSP options
+	KSPSetOptionsPrefix(ksp, "sat_");
+	KSPSetFromOptions(ksp);
+
 	// Trigger the auditor if debug mode is on
 	if (debug_mode)
 	{
@@ -1802,6 +1821,10 @@ bool Simulation::solveAcid()
 
 	KSPReset(ksp);
 	KSPSetOperators(ksp, coeff_mat, coeff_mat);
+
+	// Switch to Acid KSP options
+	KSPSetOptionsPrefix(ksp, "acid_");
+	KSPSetFromOptions(ksp);
 
 	// Trigger the auditor if debug mode is on
 	if (debug_mode)

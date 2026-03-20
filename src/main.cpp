@@ -422,7 +422,7 @@ int main(int argc, char *argv[])
 
 				if (mpi_rank == 0)
 				{
-					std::ofstream pvd(out_dir + "/leaching_simulation.pvd");
+					std::ofstream pvd(out_dir + "/time_mapping.pvd");
 					pvd << "<?xml version=\"1.0\"?>\n";
 					pvd << "<VTKFile type=\"Collection\" version=\"0.1\" byte_order=\"LittleEndian\">\n";
 					pvd << "  <Collection>\n";

@@ -50,7 +50,8 @@ stdbuf -oL -eL mpiexec -n 10 --oversubscribe ./release/LeachingSim_uint8 \
        --theta 1.0 \
        --dt 3600.0 \
        --tmax 864000.0 \
-       --nout 1 \
+       --use_out_time true \
+       --out_time 3600.0 \
        --D 1.0 \
        --kreac 1.0e-4 \
        --voxel_size 1.0 \
@@ -59,6 +60,9 @@ stdbuf -oL -eL mpiexec -n 10 --oversubscribe ./release/LeachingSim_uint8 \
        --chk_freq 50 \
        --implicit_sat true \
        --debug true \
+       --time_scalar 1000.0 \
+       --enable_microporosity true \
+       --rock_D_fac 0.001 \
        --out_dir ./preconditioner_leaching_test_output \
        -press_pc_type hypre \
        -press_pc_hypre_type boomeramg \

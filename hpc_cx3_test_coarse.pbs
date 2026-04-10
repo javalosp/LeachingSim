@@ -1,0 +1,59 @@
+#PBS -lselect=2:ncpus=64:mem=100gb
+#PBS -lwalltime=48:00:00
+#PBS -j oe
+#PBS -N coarse_LeachingSim_Job
+
+module load tools/prod
+module load foss/2023a
+module load Boost/1.82.0-GCC-12.3.0
+module load PETSc/3.20.3-foss-2023a
+module load VTK/9.3.0-foss-2023a
+
+cd $EPHEMERAL/LeachingSim
+
+echo "Job running on nodes:"
+cat $PBS_NODEFILE
+
+# Dump vtk files using fixed out time every physical hour
+#--use_out_time true \
+#--out_time 3600.0 \
+#--raw-file LA3_d0_v1_uint8_CLEANED_169_169_142.raw \
+# Increase PETSc tolerance for transport
+#-conc_ksp_rtol 1e-3 \
+#-acid_ksp_rtol 1e-3 \
+stdbuf -oL -eL mpiexec -n 128 --oversubscribe ./release/LeachingSim_uint8 \
+       --raw-file LA3_d0_v1_uint8_FRACTURED_169_169_142.raw \
+       --xext 169 \
+       --yext 169 \
+       --zext 142 \
+       --csat 1.0 \
+       --theta 1.0 \
+       --dt 3600.0 \
+       --tmax 1728000.0 \
+       --use_out_time true \
+       --out_time 3600.0 \
+       --D 0.0000001 \
+       --kreac 1000 \
+       --voxel_size 0.000034 \
+       --top_pressure 10.0 \
+       --evap_flux 0.0 \
+       --implicit_sat true \
+       --enable_microporosity false \
+       --rock_D_fac 0.001 \
+       --time_scalar 50.0 \
+       --debug true \
+       --out_dir ./coarse_agglomerate_fractured_test_output \
+       -press_pc_type hypre \
+       -press_pc_hypre_type boomeramg \
+       -sat_pc_type bjacobi \
+       -sat_sub_pc_type ilu \
+       -sat_sub_pc_factor_shift_type NONZERO \
+       -conc_pc_type bjacobi \
+       -conc_sub_pc_type ilu \
+       -conc_sub_pc_factor_shift_type NONZERO \
+       -acid_pc_type bjacobi \
+       -acid_sub_pc_type ilu \
+       -acid_sub_pc_factor_shift_type NONZERO \
+       -conc_ksp_rtol 1e-3 \
+       -acid_ksp_rtol 1e-3 \
+       > coarse_agglomerate_leaching_test_log 2>&1

@@ -253,13 +253,28 @@ void Simulation::initProperties()
  */
 void Simulation::initFrac()
 {
+	unsigned long long local_sulphide_count = 0;
 	for (int k = local.origin.k; k < (local.origin.k + local.extent.k); ++k)
 		for (int j = local.origin.j; j < (local.origin.j + local.extent.j); ++j)
 			for (int i = local.origin.i; i < (local.origin.i + local.extent.i); ++i)
 			{
 				Index idx(i, j, k);
-				frac[idx] = (img_data[idx] == Sulphide) ? 1.0 : 0.0;
+				if (img_data[idx] == Sulphide)
+				{
+					frac[idx] = 1.0;
+					local_sulphide_count++;
+				}
+				else
+				{
+					frac[idx] = 0.0;
+				}
 			}
+
+	// Sum the counts across all cores and store in the global variable
+	MPI_Allreduce(&local_sulphide_count, &initial_sulphide_count, 1, MPI_UNSIGNED_LONG_LONG, MPI_SUM, PETSC_COMM_WORLD);
+
+	// Initialise the running total to zero
+	total_leached_count = 0;
 }
 
 /**
@@ -310,7 +325,7 @@ int Simulation::updateFrac(double dt)
 				if (img_data[idx] == Sulphide)
 				{
 					double flux_sum = 0.0;
-
+					/*
 					auto calc_surface_flux = [&](Index neighbor_idx)
 					{
 						if (neighbor_idx.valid(global) && img_data[neighbor_idx] == Pore)
@@ -325,6 +340,27 @@ int Simulation::updateFrac(double dt)
 						}
 						return 0.0;
 					};
+					*/
+					auto calc_surface_flux = [&](Index neighbor_idx)
+					{
+						if (neighbor_idx.valid(global))
+						{
+							RAWType n_type = img_data[neighbor_idx];
+							bool is_pore = (n_type == Pore);
+							bool is_micro_rock = (enable_microporosity && n_type == Rock);
+
+							if (is_pore || is_micro_rock)
+							{
+								// Use penalised diffusion if leaching through rock
+								double current_D = is_pore ? D : (D * rock_D_fac);
+								double k_trans = current_D / dx;
+								double k_eff = 1.0 / ((1.0 / k_trans) + (1.0 / kreac));
+								double driving_force = conc_acid[neighbor_idx];
+								return k_eff * driving_force;
+							}
+						}
+						return 0.0;
+					};
 
 					flux_sum += calc_surface_flux(Index(i + 1, j, k));
 					flux_sum += calc_surface_flux(Index(i - 1, j, k));
@@ -335,8 +371,16 @@ int Simulation::updateFrac(double dt)
 
 					double area_per_face = dx * dx;
 					double rate = flux_sum * area_per_face;
-					if (rate > max_rate)
-						max_rate = rate;
+					double voxel_volume = dx * dx * dx;
+
+					// Volumetric rate (m^3 / s)
+					double vol_rate = flux_sum * area_per_face;
+
+					// Dimensional fix: Convert to dimensionless fractional rate (1 / s)
+					double fractional_rate = vol_rate / voxel_volume;
+
+					if (fractional_rate > max_rate)
+						max_rate = fractional_rate;
 				}
 			}
 		}
@@ -345,13 +389,23 @@ int Simulation::updateFrac(double dt)
 	double global_max_rate = 0.0;
 	MPI_Allreduce(&max_rate, &global_max_rate, 1, MPI_DOUBLE, MPI_MAX, PETSC_COMM_WORLD);
 
+	// Apply the time scalar to the fractional loss rate
+	double effective_fractional_rate = global_max_rate * time_scalar;
+
+	// Determine sub-steps. Limit fractional loss to a maximum of 10% (0.1) per sub-step.
+	double dt_safe = dt;
+	if (effective_fractional_rate > 1e-20)
+	{
+		dt_safe = 0.1 / effective_fractional_rate;
+	}
+	/*
 	// Determine sub-steps. Limit fractional loss to a maximum of 10% (0.1) per sub-step.
 	double dt_safe = dt;
 	if (global_max_rate > 1e-20)
 	{
 		dt_safe = 0.1 / global_max_rate;
 	}
-
+	*/
 	// int num_steps = std::ceil(dt / dt_safe);
 	// Use a double for the ceiling calculation, then cap it, then cast it.
 	double calculated_steps = std::ceil(dt / dt_safe);
@@ -395,6 +449,7 @@ int Simulation::updateFrac(double dt)
 						double flux_sum = 0.0;
 
 						// Re-evaluate flux (in case neighbors changed to Pore in previous sub-steps)
+						/*
 						auto calc_surface_flux = [&](Index neighbor_idx)
 						{
 							if (neighbor_idx.valid(global) && img_data[neighbor_idx] == Pore)
@@ -404,6 +459,28 @@ int Simulation::updateFrac(double dt)
 								// double driving_force = std::max(0.0, c_sat - conc[neighbor_idx]);
 								double driving_force = conc_acid[neighbor_idx];
 								return k_eff * driving_force;
+							}
+							return 0.0;
+						};
+						*/
+
+						auto calc_surface_flux = [&](Index neighbor_idx)
+						{
+							if (neighbor_idx.valid(global))
+							{
+								RAWType n_type = img_data[neighbor_idx];
+								bool is_pore = (n_type == Pore);
+								bool is_micro_rock = (enable_microporosity && n_type == Rock);
+
+								if (is_pore || is_micro_rock)
+								{
+									// Use penalized diffusion if leaching through rock
+									double current_D = is_pore ? D : (D * rock_D_fac);
+									double k_trans = current_D / dx;
+									double k_eff = 1.0 / ((1.0 / k_trans) + (1.0 / kreac));
+									double driving_force = conc_acid[neighbor_idx];
+									return k_eff * driving_force;
+								}
 							}
 							return 0.0;
 						};
@@ -419,30 +496,43 @@ int Simulation::updateFrac(double dt)
 						flux_sum = f_xp + f_xm + f_yp + f_ym + f_zp + f_zm;
 
 						double area_per_face = dx * dx;
+						double voxel_volume = dx * dx * dx;
+
+						// mass_loss is the absolute volume of solid dissolved (m^3)
 						double mass_loss = flux_sum * area_per_face * dt_sub;
 
-						frac[idx] -= mass_loss;
+						// Dimensional fix: fractional_loss is the dimensionless percentage of the voxel dissolved
+						double fractional_loss = mass_loss / voxel_volume;
+
+						// Accelerated solid volume reduction
+						// time_scalar > 1 just for testing accelerated simulations (non-physical)
+						// time_scalar = 1 is the physical case
+						// time_scalar comes from command-line (default 1)
+						// frac[idx] -= (mass_loss * time_scalar);
+						frac[idx] -= (fractional_loss * time_scalar);
 
 						// Consume the acid from the adjacent pores
 						// Distribute the consumption across the neighboring pores proportional to the flux from each face.
+						// Keep acid consumption unaffected by time_scalar
 						if (flux_sum > 0.0)
 						{
 							if (Index(i + 1, j, k).valid(global))
-								conc_acid[Index(i + 1, j, k)] -= mass_loss * (f_xp / flux_sum);
+								conc_acid[Index(i + 1, j, k)] -= fractional_loss * (f_xp / flux_sum);
 							if (Index(i - 1, j, k).valid(global))
-								conc_acid[Index(i - 1, j, k)] -= mass_loss * (f_xm / flux_sum);
+								conc_acid[Index(i - 1, j, k)] -= fractional_loss * (f_xm / flux_sum);
 							if (Index(i, j + 1, k).valid(global))
-								conc_acid[Index(i, j + 1, k)] -= mass_loss * (f_yp / flux_sum);
+								conc_acid[Index(i, j + 1, k)] -= fractional_loss * (f_yp / flux_sum);
 							if (Index(i, j - 1, k).valid(global))
-								conc_acid[Index(i, j - 1, k)] -= mass_loss * (f_ym / flux_sum);
+								conc_acid[Index(i, j - 1, k)] -= fractional_loss * (f_ym / flux_sum);
 							if (Index(i, j, k + 1).valid(global))
-								conc_acid[Index(i, j, k + 1)] -= mass_loss * (f_zp / flux_sum);
+								conc_acid[Index(i, j, k + 1)] -= fractional_loss * (f_zp / flux_sum);
 							if (Index(i, j, k - 1).valid(global))
-								conc_acid[Index(i, j, k - 1)] -= mass_loss * (f_zm / flux_sum);
+								conc_acid[Index(i, j, k - 1)] -= fractional_loss * (f_zm / flux_sum);
 						}
 
 						// Check if voxel has fully dissolved
 						// using a leaching threshold (e.g. 1e-4)
+						// The effect of the time_scalar is here
 						if (frac[idx] <= 1e-4)
 						{
 							frac[idx] = 0.0;
@@ -509,8 +599,20 @@ void Simulation::doExchange()
  * - Air: Fixed-pressure (Dirichlet) boundary.
  * - Rock/Sulphide: No-flow boundary.
  */
-void Simulation::setupPressureEqns()
+void Simulation::setupPressureEqns(double current_time)
 {
+
+	// BOUNDARY PRESSURE RAMPING
+	double ramp_duration = 3600.0; // Ramp the pressure over the first physical hour
+	double effective_top_pressure = top_pressure;
+
+	if (current_time < ramp_duration)
+	{
+		// Linearly scale the pressure from near-zero to top_pressure
+		// add a small values (1e-6) to prevent an absolute zero pressure gradient at the very first step
+		effective_top_pressure = top_pressure * (current_time / ramp_duration) + 1e-6;
+	}
+
 	MatZeroEntries(coeff_mat);
 	VecZeroEntries(sources_vec);
 	for (int k = local.origin.k; k < (local.origin.k + local.extent.k); ++k)
@@ -530,15 +632,33 @@ void Simulation::setupPressureEqns()
 					// Set RHS accordingly
 					if (voxel_type == Air)
 					{
-						// Apply the pressure head to ANY Air voxel in the top half of the domain.
-						// This guarantees the high pressure actually touches the porous rock.
-						if (i < global.extent.i / 2)
+						// Exposed surface boundary condition
+						// Check if this Air voxel is directly touching the agglomerate surface.
+						bool is_surface = false;
+
+						Index nxp(i + 1, j, k), nxm(i - 1, j, k);
+						Index nyp(i, j + 1, k), nym(i, j - 1, k);
+						Index nzp(i, j, k + 1), nzm(i, j, k - 1);
+
+						// If any of the 6 adjacent neighbors is NOT Air, this is a surface voxel
+						if ((nxp.valid(global) && img_data[nxp] != Air) ||
+							(nxm.valid(global) && img_data[nxm] != Air) ||
+							(nyp.valid(global) && img_data[nyp] != Air) ||
+							(nym.valid(global) && img_data[nym] != Air) ||
+							(nzp.valid(global) && img_data[nzp] != Air) ||
+							(nzm.valid(global) && img_data[nzm] != Air))
 						{
-							// VecSetValue(sources_vec, arridx, 10000.0, ADD_VALUES);
-							VecSetValue(sources_vec, arridx, top_pressure, ADD_VALUES);
+							is_surface = true;
+						}
+
+						if (is_surface)
+						{
+							// Apply the ramped irrigation pressure to the exact surface of the rock
+							VecSetValue(sources_vec, arridx, effective_top_pressure, ADD_VALUES);
 						}
 						else
 						{
+							// Ambient air away from the agglomerate remains at zero gauge pressure
 							VecSetValue(sources_vec, arridx, 0.0, ADD_VALUES);
 						}
 						continue;
@@ -600,6 +720,14 @@ void Simulation::setupPressureEqns()
 					set_neighbor_link(Index(i, j - 1, k), 1);
 					set_neighbor_link(Index(i, j, k + 1), 2);
 					set_neighbor_link(Index(i, j, k - 1), 2);
+
+					// Prevent structurally missing diagonals
+					// If this is an isolated or completely dry pore, the math evaluates to 0.0.
+					// Use a tiny dummy value to force PETSc to keep the diagonal node alive in memory.
+					if (std::abs(diagonal_term) < 1e-16)
+					{
+						diagonal_term = 1e-16;
+					}
 
 					// MatSetValue(coeff_mat, arridx, arridx, diagonal_term, INSERT_VALUES);
 					// VecSetValue(sources_vec, arridx, source_term, INSERT_VALUES);
@@ -800,6 +928,7 @@ void Simulation::setupConcentrationEqns(double dt, MPIDomain<double, 1, IDX_SCHE
 				int arridx = idx.arrayId(global);
 				RAWType voxel_type = img_data[idx];
 
+				/*
 				if (voxel_type == Rock || voxel_type == Precipitate || voxel_type == Sulphide)
 				{
 					flux_x[idx] = 0.0;
@@ -807,6 +936,7 @@ void Simulation::setupConcentrationEqns(double dt, MPIDomain<double, 1, IDX_SCHE
 					flux_z[idx] = 0.0;
 					continue;
 				}
+				*/
 
 				// Set values the linear system (Ax = b) for air, sulphide and rock voxels
 				if (voxel_type == Air)
@@ -819,6 +949,10 @@ void Simulation::setupConcentrationEqns(double dt, MPIDomain<double, 1, IDX_SCHE
 				}
 				else if (voxel_type == Sulphide)
 				{
+					// Zero fluxes to ensure no advection out of the solid
+					flux_x[idx] = 0.0;
+					flux_y[idx] = 0.0;
+					flux_z[idx] = 0.0;
 					// Sulphide voxels act as a saturated source (C = 1.0)
 					MatSetValue(coeff_mat, arridx, arridx, 1.0, ADD_VALUES);
 					// VecSetValue(sources_vec, arridx, 1.0, ADD_VALUES);
@@ -827,12 +961,27 @@ void Simulation::setupConcentrationEqns(double dt, MPIDomain<double, 1, IDX_SCHE
 				}
 				else if (voxel_type == Rock || voxel_type == Precipitate)
 				{
-					// Rock & Precipitate are impermeable; they retain their current concentration
-					MatSetValue(coeff_mat, arridx, arridx, 1.0, ADD_VALUES);
-					VecSetValue(sources_vec, arridx, field[idx], ADD_VALUES);
-					continue;
+					// Zero fluxes to ensure no advection out of the solid
+					flux_x[idx] = 0.0;
+					flux_y[idx] = 0.0;
+					flux_z[idx] = 0.0;
+
+					// If microporosity is disabled Rock is impermeable
+					// and Precipitate is always assumed as impermeable
+					// then they retain their current concentration
+					if (!enable_microporosity || voxel_type == Precipitate)
+					{
+						MatSetValue(coeff_mat, arridx, arridx, 1.0, ADD_VALUES);
+						VecSetValue(sources_vec, arridx, field[idx], ADD_VALUES);
+						continue; // Skip the transport math
+					}
+					// If we reach here, enable_microporosity is TRUE and voxel is Rock.
+					// Since continue was not called in previous conditions,
+					// it falls through to the diffusion solver
 				}
 
+				// Any voxel reaching this point is assumed to be a Pore
+				// or Rock with microporosity
 				MatSetValue(coeff_mat, arridx, arridx, inv_dt, ADD_VALUES);
 				// VecSetValue(sources_vec, arridx, conc[idx] * inv_dt, ADD_VALUES);
 				VecSetValue(sources_vec, arridx, field[idx] * inv_dt, ADD_VALUES);
@@ -840,8 +989,34 @@ void Simulation::setupConcentrationEqns(double dt, MPIDomain<double, 1, IDX_SCHE
 				// Lambda function for setting advection and diffussion rates
 				auto set_link = [&](Index neighbor_idx, double q_face)
 				{
-					double D_eff = (img_data[neighbor_idx] == Pore) ? this->D * this->Dpore_fac : this->D;
+					RAWType neigh_type = img_data[neighbor_idx];
+
+					// Calculate Effective Diffusion
+					double D_eff = this->D; // Base diffusion for boundaries (Air, Sulphide)
+
+					bool is_solid_self = (voxel_type == Rock || voxel_type == Precipitate);
+					bool is_solid_neigh = (neigh_type == Rock || neigh_type == Precipitate);
+
+					// if (voxel_type == Rock || neigh_type == Rock)
+					if (is_solid_self || is_solid_neigh)
+					{
+						D_eff = this->D * this->rock_D_fac; // Penalise diffusion in/through rock/solid
+					}
+					else if (neigh_type == Pore)
+					{
+						D_eff = this->D * this->Dpore_fac; // "Enhanced" diffusion through open fluid pathways (Dpore_fac defaults to 1)
+					}
+					// double D_eff = (img_data[neighbor_idx] == Pore) ? this->D * this->Dpore_fac : this->D;
 					double diffusion_coeff = -D_eff / (dx * dx);
+
+					// Calculate Advection (strictly zero across solid interfaces!)
+					double actual_q_face = q_face;
+					if (voxel_type == Rock || neigh_type == Rock ||
+						voxel_type == Sulphide || neigh_type == Sulphide ||
+						voxel_type == Precipitate || neigh_type == Precipitate)
+					{
+						actual_q_face = 0.0; // Prevent fluid mass loss into the solid
+					}
 
 					// Group the physical coefficients for the (-L) operator
 					double coeff_neighbor = diffusion_coeff;
@@ -1793,7 +1968,13 @@ void Simulation::handlePrecipitation()
 						double fluid_vol_fraction = porosity * saturation[idx];
 						double precipitated_vol_fraction = (excess_conc * fluid_vol_fraction) / solid_density;
 
-						precipitate_inventory[idx] += precipitated_vol_fraction;
+						// Accelerated solid volume (precipitate) buildup
+						// time_scalar > 1 just for testing accelerated simulations (non-physical)
+						// time_scalar = 1 is the physical case
+						// time_scalar comes from command-line (default 1)
+						precipitate_inventory[idx] += (precipitated_vol_fraction * time_scalar);
+
+						// precipitate_inventory[idx] += precipitated_vol_fraction;
 
 						// If the pore is more than 90% full of solid, blind it.
 						double critical_limit = 0.90;

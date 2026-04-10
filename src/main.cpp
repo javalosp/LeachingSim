@@ -36,7 +36,7 @@ int main(int argc, char *argv[])
 
 		// Command line argument parsing
 		opts::options_description cmd_opts("Command line arguments");
-		cmd_opts.add_options()("help,h", "Print this message and exit.")("raw-file", opts::value<string>()->required(), "Input RAW file specifying the domain.")("xext", opts::value<int>()->required(), "The x extent of the domain")("yext", opts::value<int>()->required(), "The y extent of the domain")("zext", opts::value<int>()->required(), "The z extent of the domain")("out_dir", opts::value<string>()->default_value("./output"), "The output directory")("header_size", opts::value<size_t>()->default_value(0), "RAW file header size in bytes.")("voxel_size", opts::value<double>()->default_value(1.), "Size of voxels (m).")("D", opts::value<double>()->default_value(1.), "Diffusion constant (m^2/s).")("kext", opts::value<double>()->default_value(1.), "Mass transfer to exterior.")("kreac", opts::value<double>()->default_value(1.), "Reaction transfer from sulphide grains.")("Dpore_fac", opts::value<double>()->default_value(1.), "Pore diffusivity enhancement factor")("dt", opts::value<double>()->default_value(1.), "Simulation time step (s).")("tmax", opts::value<double>()->default_value(10.), "Maximum simulation time (s).")("nout", opts::value<int>()->default_value(1), "Output every N-th time step.")("seed", opts::value<size_t>()->default_value(42), "Pseudo-RNG seed value.")("csat", opts::value<double>()->default_value(0.95), "Saturation concentration limit.")("evap_flux", opts::value<double>()->default_value(0.0), "Evaporative flux (m/s)")("theta", opts::value<double>()->default_value(1.0), "Time scheme (0=Explicit, 0.5=Crank-Nicolson, 1.0=Implicit)")("instant_precip", opts::value<bool>()->default_value(false), "Enable instant pore blinding upon supersaturation")("porosity", opts::value<double>()->default_value(0.1), "Material porosity")("top_pressure", opts::value<double>()->default_value(10000.0), "Applied pressure head at the top boundary (Pa, simulates irrigation)")("max_cap_grad", opts::value<double>()->default_value(50000.0), "Maximum capillary pressure gradient (Pa/m) for explicit solver stability")("implicit_sat", opts::value<bool>()->default_value(false), "Toggle: True = Implicit PETSc Solver, False = Explicit Sub-stepping")("restart_step", opts::value<int>()->default_value(0), "Step to restart from (0 = fresh start)")("chk_freq", opts::value<int>()->default_value(1000), "Number of steps between saving binary checkpoints")("debug", opts::value<bool>()->default_value(false), "Enable detailed runtime debugging and NaN checks");
+		cmd_opts.add_options()("help,h", "Print this message and exit.")("raw-file", opts::value<string>()->required(), "Input RAW file specifying the domain.")("xext", opts::value<int>()->required(), "The x extent of the domain")("yext", opts::value<int>()->required(), "The y extent of the domain")("zext", opts::value<int>()->required(), "The z extent of the domain")("out_dir", opts::value<string>()->default_value("./output"), "The output directory")("header_size", opts::value<size_t>()->default_value(0), "RAW file header size in bytes.")("voxel_size", opts::value<double>()->default_value(1.), "Size of voxels (m).")("D", opts::value<double>()->default_value(1.), "Diffusion constant (m^2/s).")("kext", opts::value<double>()->default_value(1.), "Mass transfer to exterior.")("kreac", opts::value<double>()->default_value(1.), "Reaction transfer from sulphide grains.")("Dpore_fac", opts::value<double>()->default_value(1.), "Pore diffusivity enhancement factor")("dt", opts::value<double>()->default_value(1.), "Simulation time step (s).")("tmax", opts::value<double>()->default_value(10.), "Maximum simulation time (s).")("nout", opts::value<int>()->default_value(1), "Output every N-th time step.")("seed", opts::value<size_t>()->default_value(42), "Pseudo-RNG seed value.")("csat", opts::value<double>()->default_value(0.95), "Saturation concentration limit.")("evap_flux", opts::value<double>()->default_value(0.0), "Evaporative flux (m/s)")("theta", opts::value<double>()->default_value(1.0), "Time scheme (0=Explicit, 0.5=Crank-Nicolson, 1.0=Implicit)")("instant_precip", opts::value<bool>()->default_value(false), "Enable instant pore blinding upon supersaturation")("porosity", opts::value<double>()->default_value(0.1), "Material porosity")("top_pressure", opts::value<double>()->default_value(10000.0), "Applied pressure head at the top boundary (Pa, simulates irrigation)")("max_cap_grad", opts::value<double>()->default_value(50000.0), "Maximum capillary pressure gradient (Pa/m) for explicit solver stability")("implicit_sat", opts::value<bool>()->default_value(false), "Toggle: True = Implicit PETSc Solver, False = Explicit Sub-stepping")("restart_step", opts::value<int>()->default_value(0), "Step to restart from (0 = fresh start)")("chk_freq", opts::value<int>()->default_value(1000), "Number of steps between saving binary checkpoints")("debug", opts::value<bool>()->default_value(false), "Enable detailed runtime debugging and NaN checks")("use_out_time", opts::value<bool>()->default_value(false), "Toggle: True = Output based on physical time, False = Output based on iterations (nout)")("out_time", opts::value<double>()->default_value(3600.0), "Physical time interval between VTK outputs (seconds)")("time_scalar", opts::value<double>()->default_value(1.0), "Physical time accelerator for solid mass transfer (fast-forward factor)")("enable_microporosity", opts::value<bool>()->default_value(false), "Toggle: Enable acid diffusion and leaching through solid rock matrix")("rock_D_fac", opts::value<double>()->default_value(1e-4), "Multiplier for the diffusion coefficient inside the rock matrix");
 
 		/* Simluation cases can vary depending on some options values, e.g.
 		Leaching case
@@ -51,7 +51,7 @@ int main(int argc, char *argv[])
 		opts::variables_map cmd;
 		// opts::store(opts::parse_command_line(argc, argv, cmd_opts), cmd);
 		// Allow command line options not defined before
-		// This allos passing some PETSc options like preconditioners
+		// This allows passing some PETSc options like preconditioners
 		opts::store(opts::command_line_parser(argc, argv).options(cmd_opts).allow_unregistered().run(), cmd);
 
 		if (cmd.count("help") && mpi_rank == 0)
@@ -80,6 +80,9 @@ int main(int argc, char *argv[])
 		the_simulation.porosity = cmd["porosity"].as<double>();
 		the_simulation.use_implicit_saturation = cmd["implicit_sat"].as<bool>();
 		the_simulation.debug_mode = cmd["debug"].as<bool>();
+		the_simulation.time_scalar = cmd["time_scalar"].as<double>();
+		the_simulation.enable_microporosity = cmd["enable_microporosity"].as<bool>();
+		the_simulation.rock_D_fac = cmd["rock_D_fac"].as<double>();
 
 		// Initialise some constants
 		the_simulation.vg_n = 2.0; // Must be strictly > 1.0
@@ -205,6 +208,33 @@ int main(int argc, char *argv[])
 		double tmax = cmd["tmax"].as<double>();
 		int nout = cmd["nout"].as<int>();
 
+		// Extract output triggers
+		bool use_out_time = cmd["use_out_time"].as<bool>();
+		double out_time_interval = cmd["out_time"].as<double>();
+
+		const char *output_mode;
+		double output_dump_frequency;
+
+		// Add the output mode information to the parameters summary
+		if (use_out_time)
+		{
+			output_mode = "Physical time based (seconds)";
+			output_dump_frequency = out_time_interval;
+		}
+		else
+		{
+			output_mode = "Time steps based (timesteps)";
+			output_dump_frequency = 1.0 * nout;
+		}
+
+		// If restarting, we need to calculate the next valid output time.
+		// If starting fresh, the first output is at t = 0.0.
+		double next_out_time = std::floor(t / out_time_interval) * out_time_interval;
+		if (t > 0.0 && t >= next_out_time)
+		{
+			next_out_time += out_time_interval;
+		}
+
 		// PARAMETER VERIFICATION LOG
 		if (mpi_rank == 0)
 		{
@@ -227,6 +257,9 @@ int main(int argc, char *argv[])
 			std::cout << "  Precipitation mode               : " << (the_simulation.use_instant_precipitation ? "True (Instant)" : "False (Gradual)") << std::endl;
 			std::cout << "  Saturation Solver                : " << (the_simulation.use_implicit_saturation ? "Implicit (PETSc)" : "Explicit (Sub-stepping)") << std::endl;
 			std::cout << "  Debug Mode                       : " << (the_simulation.debug_mode ? "True (Active)" : "False (Inactive)") << std::endl;
+			std::cout << "  Output Mode                      : " << output_mode << std::endl;
+			std::cout << "  Output Frequency                 : " << output_dump_frequency << std::endl;
+			std::cout << "  Rock Microporosity               : " << (the_simulation.enable_microporosity ? "True (Active)" : "False (Inactive)") << std::endl;
 			std::cout << "==================================================\n"
 					  << std::endl;
 		}
@@ -288,7 +321,7 @@ int main(int argc, char *argv[])
 					the_simulation.permeability.exchangePadding(MPI_DOUBLE);
 
 					// Solve pressure
-					the_simulation.setupPressureEqns();
+					the_simulation.setupPressureEqns(t);
 					if (!the_simulation.solvePressure())
 					{
 						step_successful = false;
@@ -366,8 +399,21 @@ int main(int argc, char *argv[])
 					int leached_this_step = the_simulation.updateFrac(current_dt);
 					int leached_total = 0;
 					MPI_Allreduce(&leached_this_step, &leached_total, 1, MPI_INT, MPI_SUM, PETSC_COMM_WORLD);
+					the_simulation.total_leached_count += leached_total;
 					if (mpi_rank == 0)
+					{
+						// Calculate the overall leaching progress percentage
+						double percentage = 0.0;
+						if (the_simulation.initial_sulphide_count > 0)
+						{
+							percentage = (double)the_simulation.total_leached_count / the_simulation.initial_sulphide_count * 100.0;
+						}
 						cout << "Done iteration. [" << leached_total << " voxels fully leached this step.]" << endl;
+						cout << "    [Leaching Progress] Total Leached: "
+							 << the_simulation.total_leached_count << " / "
+							 << the_simulation.initial_sulphide_count
+							 << " (" << std::fixed << std::setprecision(4) << percentage << "%)" << std::endl;
+					}
 				}
 
 				// -------------------------------------------------------------
@@ -395,11 +441,37 @@ int main(int argc, char *argv[])
 			// OUTPUT AND TIME ADVANCEMENT
 			// =================================================================
 
+			// Determine if we should output this frame
+			bool trigger_output = false;
+
+			if (use_out_time)
+			{
+				// Physical time trigger (e.g., every 3600 seconds)
+				// We use a small epsilon (1e-6) to avoid floating-point rounding misses
+				if (t >= next_out_time - 1e-6)
+				{
+					trigger_output = true;
+					// Safely advance the tracker to the next interval
+					while (next_out_time <= t)
+					{
+						next_out_time += out_time_interval;
+					}
+				}
+			}
+			else
+			{
+				// Iteration based trigger
+				if (n % nout == 0)
+				{
+					trigger_output = true;
+				}
+			}
+
 			// Property sync and file output
-			if (n % cmd["nout"].as<int>() == 0)
+			if (trigger_output)
 			{
 				if (mpi_rank == 0)
-					cout << "Syncing physical properties for VTK output..." << endl;
+					std::cout << "Syncing physical properties for VTK output at t = " << t << "s..." << std::endl;
 
 				the_simulation.updateRelativePermeability();
 				the_simulation.updateCapillaryPressure();
@@ -407,7 +479,7 @@ int main(int argc, char *argv[])
 				the_simulation.permeability.exchangePadding(MPI_DOUBLE);
 
 				if (mpi_rank == 0)
-					cout << "Writing output for time step " << n << "..." << endl;
+					std::cout << "Writing output for time step " << n << "..." << std::endl;
 
 				size_t output_flags = VTKOutput::Conc | VTKOutput::Pressure | VTKOutput::Frac |
 									  VTKOutput::Type | VTKOutput::Flux_Vec | VTKOutput::Saturation |

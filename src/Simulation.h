@@ -55,7 +55,8 @@ public:
 	void handlePrecipitation();
 
 	// Solvers for Dynamic Model
-	void setupPressureEqns();
+	// void setupPressureEqns();
+	void setupPressureEqns(double current_time);
 	// void setupConcentrationEqns(double dt);
 	void setupConcentrationEqns(double dt, MPIDomain<double, 1, IDX_SCHEME> &field, double inlet_bc, double sulphide_bc);
 	void setupSaturationEqns(double dt);
@@ -81,6 +82,18 @@ public:
 	// Debugging
 	bool debug_mode = false;
 	void auditLinearSystem(Mat A, Vec b, std::string label);
+
+	// This is a fast-forwardmultiplier for material evolution while preserving stability (non-physical)
+	// Just for testing accelerated simulations
+	double time_scalar;
+
+	// Microporosity controls
+	bool enable_microporosity;
+	double rock_D_fac; // Multiplier to penalise diffusion inside the solid rock
+
+	// Global leaching trackers
+	unsigned long long initial_sulphide_count;
+	unsigned long long total_leached_count;
 
 	// Checkpoint/restart functions
 	void writeCheckpoint(std::string out_dir, int step);

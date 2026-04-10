@@ -19,7 +19,11 @@ cat $PBS_NODEFILE
 # Preconditioners:
 # -pc_type bjacobi -sub_pc_type ilu
 # -pc_type hypre -pc_hypre_type boomeramg
-mpiexec -n 128 --oversubscribe ./release/LeachingSim_uint8 \
+# Monitors
+# -press_ksp_monitor \
+# -press_ksp_converged_reason \
+
+stdbuf -oL -eL mpiexec -n 128 --oversubscribe ./release/LeachingSim_uint8 \
        --raw-file LA3_d0_v1_uint8_unnormalised_338_338_283.raw \
        --xext 338 \
        --yext 338 \
@@ -28,7 +32,7 @@ mpiexec -n 128 --oversubscribe ./release/LeachingSim_uint8 \
        --theta 1.0 \
        --dt 3600.0 \
        --tmax 1728000.0 \
-       --nout 1 \
+       --nout 100 \
        --D 0.0000001 \
        --kreac 1000 \
        --voxel_size 0.000017 \
@@ -37,5 +41,12 @@ mpiexec -n 128 --oversubscribe ./release/LeachingSim_uint8 \
        --implicit_sat true \
        --debug true \
        --out_dir ./agglomerate_leaching_test_output \
-       -pc_type bjacobi -sub_pc_type ilu \
+       -press_pc_type hypre \
+       -press_pc_hypre_type boomeramg \
+       -sat_pc_type bjacobi \
+       -sat_sub_pc_type ilu \
+       -conc_pc_type bjacobi \
+       -conc_sub_pc_type ilu \
+       -acid_pc_type bjacobi \
+       -acid_sub_pc_type ilu \
        > agglomerate_leaching_test_log 2>&1

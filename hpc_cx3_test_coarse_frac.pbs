@@ -21,6 +21,10 @@ cat $PBS_NODEFILE
 # Increase PETSc tolerance for transport
 #-conc_ksp_rtol 1e-3 \
 #-acid_ksp_rtol 1e-3 \
+# Reduce reaction rate
+# --kreac 0.1 instead of --kreac 1000 \
+# Reduce top top_pressure
+#--top_pressure 10.0 \
 stdbuf -oL -eL mpiexec -n 128 --oversubscribe ./release/LeachingSim_uint8 \
        --raw-file LA3_d0_v1_uint8_FRACTURED_WIDE_169_169_142.raw \
        --xext 169 \
@@ -31,16 +35,17 @@ stdbuf -oL -eL mpiexec -n 128 --oversubscribe ./release/LeachingSim_uint8 \
        --dt 3600.0 \
        --tmax 1728000.0 \
        --use_out_time true \
-       --out_time 3600.0 \
+       --out_time 60.0 \
        --D 0.0000001 \
-       --kreac 1000 \
+       --kreac 0.1 \
        --voxel_size 0.000034 \
-       --top_pressure 10.0 \
+       --top_pressure 0.1 \
        --evap_flux 0.0 \
        --implicit_sat true \
+       --max_cap_grad 1000.0 \
        --enable_microporosity false \
-       --rock_D_fac 0.001 \
-       --time_scalar 10.0 \
+       --alpha_transfer 0.00001 \
+       --time_scalar 1.0 \
        --debug true \
        --out_dir ./coarse_agglomerate_fractured_test_output \
        -press_pc_type hypre \
@@ -54,6 +59,7 @@ stdbuf -oL -eL mpiexec -n 128 --oversubscribe ./release/LeachingSim_uint8 \
        -acid_pc_type bjacobi \
        -acid_sub_pc_type ilu \
        -acid_sub_pc_factor_shift_type NONZERO \
-       -conc_ksp_rtol 1e-3 \
-       -acid_ksp_rtol 1e-3 \
+       -conc_ksp_rtol 1e-2 \
+       -acid_ksp_rtol 1e-2 \
+       -sat_ksp_rtol 1e-2 \
        > coarse_agglomerate_fractured_test_log 2>&1

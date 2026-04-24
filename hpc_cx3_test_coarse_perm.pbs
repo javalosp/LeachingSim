@@ -1,7 +1,7 @@
 #PBS -lselect=2:ncpus=64:mem=100gb
 #PBS -lwalltime=48:00:00
 #PBS -j oe
-#PBS -N fractured_LeachingSim_Job
+#PBS -N perm_LeachingSim_Job
 
 module load tools/prod
 module load foss/2023a
@@ -22,7 +22,7 @@ cat $PBS_NODEFILE
 #-conc_ksp_rtol 1e-3 \
 #-acid_ksp_rtol 1e-3 \
 stdbuf -oL -eL mpiexec -n 128 --oversubscribe ./release/LeachingSim_uint8 \
-       --raw-file LA3_d0_v1_uint8_FRACTURED_WIDE_169_169_142.raw \
+       --raw-file LA3_d0_v1_uint8_CLEANED_169_169_142.raw \
        --xext 169 \
        --yext 169 \
        --zext 142 \
@@ -38,11 +38,11 @@ stdbuf -oL -eL mpiexec -n 128 --oversubscribe ./release/LeachingSim_uint8 \
        --top_pressure 10.0 \
        --evap_flux 0.0 \
        --implicit_sat true \
-       --enable_microporosity false \
+       --enable_microporosity true \
        --rock_D_fac 0.001 \
-       --time_scalar 10.0 \
+       --time_scalar 50.0 \
        --debug true \
-       --out_dir ./coarse_agglomerate_fractured_test_output \
+       --out_dir ./coarse_agglomerate_perm_test_output \
        -press_pc_type hypre \
        -press_pc_hypre_type boomeramg \
        -sat_pc_type bjacobi \
@@ -56,4 +56,4 @@ stdbuf -oL -eL mpiexec -n 128 --oversubscribe ./release/LeachingSim_uint8 \
        -acid_sub_pc_factor_shift_type NONZERO \
        -conc_ksp_rtol 1e-3 \
        -acid_ksp_rtol 1e-3 \
-       > coarse_agglomerate_fractured_test_log 2>&1
+       > coarse_agglomerate_perm_test_log 2>&1

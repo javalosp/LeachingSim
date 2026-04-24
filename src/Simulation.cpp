@@ -279,7 +279,8 @@ void Simulation::initFrac()
 
 /**
  * @brief Initialises the fraction of reactant material in each voxel.
- * * Sets the 'frac' field to 1.0 for sulphide voxels and 0.0 for all others.
+ * * "Acid Wash" Mode: The entire domain starts clean (0.0).
+ * * Acid is introduced dynamically via the 'inlet_bc' during the Transport solve.
  */
 void Simulation::initAcid()
 {
@@ -290,17 +291,19 @@ void Simulation::initAcid()
 			for (int i = local.origin.i; i < (local.origin.i + local.extent.i); ++i)
 			{
 				Index idx(i, j, k);
-				RAWType voxel_type = img_data[idx];
+				// RAWType voxel_type = img_data[idx];
 
 				// Initially, pores and the top Air boundary are full of acid (1.0)
-				if (voxel_type == Pore || (voxel_type == Air && i == 0))
-				{
-					conc_acid[idx] = 1.0;
-				}
-				else
-				{
-					conc_acid[idx] = 0.0;
-				}
+				// if (voxel_type == Pore || (voxel_type == Air && i == 0))
+				//{
+				//	conc_acid[idx] = 1.0;
+				//}
+				// else
+				//{
+				// Initialize all voxels (Air, Pore, Rock, Sulphide) to 0.0
+				// The fluid solver will physically advect/diffuse the acid inward from the boundary.
+				conc_acid[idx] = 0.0;
+				//}
 			}
 		}
 	}
@@ -341,6 +344,8 @@ int Simulation::updateFrac(double dt)
 						return 0.0;
 					};
 					*/
+
+					/*
 					auto calc_surface_flux = [&](Index neighbor_idx)
 					{
 						if (neighbor_idx.valid(global))
@@ -356,6 +361,31 @@ int Simulation::updateFrac(double dt)
 								double k_trans = current_D / dx;
 								double k_eff = 1.0 / ((1.0 / k_trans) + (1.0 / kreac));
 								double driving_force = conc_acid[neighbor_idx];
+								return k_eff * driving_force;
+							}
+						}
+						return 0.0;
+					};
+					*/
+
+					auto calc_surface_flux = [&](Index neighbor_idx)
+					{
+						if (neighbor_idx.valid(global))
+						{
+							RAWType n_type = img_data[neighbor_idx];
+
+							// React if touching a flowing Pore OR an acid-soaked Rock matrix
+							if (n_type == Pore || n_type == Rock)
+							{
+								// Base diffusion through boundary layer
+								double k_trans = D / dx;
+
+								// Calculate effective kinetic constant
+								double k_eff = 1.0 / ((1.0 / k_trans) + (1.0 / kreac));
+
+								// The driving force is the acid concentration inside that specific neighbor
+								double driving_force = conc_acid[neighbor_idx];
+
 								return k_eff * driving_force;
 							}
 						}
@@ -464,6 +494,7 @@ int Simulation::updateFrac(double dt)
 						};
 						*/
 
+						/*
 						auto calc_surface_flux = [&](Index neighbor_idx)
 						{
 							if (neighbor_idx.valid(global))
@@ -479,6 +510,31 @@ int Simulation::updateFrac(double dt)
 									double k_trans = current_D / dx;
 									double k_eff = 1.0 / ((1.0 / k_trans) + (1.0 / kreac));
 									double driving_force = conc_acid[neighbor_idx];
+									return k_eff * driving_force;
+								}
+							}
+							return 0.0;
+						};
+						*/
+
+						auto calc_surface_flux = [&](Index neighbor_idx)
+						{
+							if (neighbor_idx.valid(global))
+							{
+								RAWType n_type = img_data[neighbor_idx];
+
+								// React if touching a flowing Pore OR an acid-soaked Rock matrix
+								if (n_type == Pore || n_type == Rock)
+								{
+									// Base diffusion through boundary layer
+									double k_trans = D / dx;
+
+									// Calculate effective kinetic constant
+									double k_eff = 1.0 / ((1.0 / k_trans) + (1.0 / kreac));
+
+									// The driving force is the acid concentration inside that specific neighbor
+									double driving_force = conc_acid[neighbor_idx];
+
 									return k_eff * driving_force;
 								}
 							}
@@ -928,16 +984,17 @@ void Simulation::setupConcentrationEqns(double dt, MPIDomain<double, 1, IDX_SCHE
 				int arridx = idx.arrayId(global);
 				RAWType voxel_type = img_data[idx];
 
-				/*
-				if (voxel_type == Rock || voxel_type == Precipitate || voxel_type == Sulphide)
-				{
-					flux_x[idx] = 0.0;
-					flux_y[idx] = 0.0;
-					flux_z[idx] = 0.0;
-					continue;
-				}
-				*/
+				///*
+				// if (voxel_type == Rock || voxel_type == Precipitate || voxel_type == Sulphide)
+				//{
+				//	flux_x[idx] = 0.0;
+				//	flux_y[idx] = 0.0;
+				//	flux_z[idx] = 0.0;
+				//	continue;
+				// }
+				//*/
 
+				/*
 				// Set values the linear system (Ax = b) for air, sulphide and rock voxels
 				if (voxel_type == Air)
 				{
@@ -980,6 +1037,7 @@ void Simulation::setupConcentrationEqns(double dt, MPIDomain<double, 1, IDX_SCHE
 					// it falls through to the diffusion solver
 				}
 
+				// Rock microporosity approach
 				// Any voxel reaching this point is assumed to be a Pore
 				// or Rock with microporosity
 				MatSetValue(coeff_mat, arridx, arridx, inv_dt, ADD_VALUES);
@@ -1067,6 +1125,110 @@ void Simulation::setupConcentrationEqns(double dt, MPIDomain<double, 1, IDX_SCHE
 				neighbor_idx = Index(i, j, k - 1);
 				if (neighbor_idx.valid(global))
 					set_link(neighbor_idx, -(flux_z[idx] + flux_z[neighbor_idx]) / 2.0);
+				*/
+				// ====================================================================
+				// 1. PRECIPITATE (Impermeable - Lock it down)
+				// ====================================================================
+				if (voxel_type == Precipitate)
+				{
+					flux_x[idx] = 0.0;
+					flux_y[idx] = 0.0;
+					flux_z[idx] = 0.0;
+					MatSetValue(coeff_mat, arridx, arridx, 1.0, ADD_VALUES);
+					VecSetValue(sources_vec, arridx, field[idx], ADD_VALUES);
+					continue; // Skip all other math
+				}
+
+				// ====================================================================
+				// 2. ROCK MATRIX (0D Warren-Root Storage Bin)
+				// ====================================================================
+				if (voxel_type == Rock)
+				{
+					flux_x[idx] = 0.0;
+					flux_y[idx] = 0.0;
+					flux_z[idx] = 0.0;
+
+					// Base time derivative: C_new/dt = C_old/dt
+					MatSetValue(coeff_mat, arridx, arridx, inv_dt, ADD_VALUES);
+					VecSetValue(sources_vec, arridx, field[idx] * inv_dt, ADD_VALUES);
+
+					// Evaluate neighbors for Pore-to-Rock mass transfer
+					auto set_rock_link = [&](Index neighbor_idx)
+					{
+						if (neighbor_idx.valid(global) && img_data[neighbor_idx] == Pore)
+						{
+							// Add sink term: +alpha * C_rock - alpha * C_pore
+							MatSetValue(coeff_mat, arridx, arridx, alpha_transfer, ADD_VALUES);
+							MatSetValue(coeff_mat, arridx, neighbor_idx.arrayId(global), -alpha_transfer, ADD_VALUES);
+						}
+					};
+
+					set_rock_link(Index(i + 1, j, k));
+					set_rock_link(Index(i - 1, j, k));
+					set_rock_link(Index(i, j + 1, k));
+					set_rock_link(Index(i, j - 1, k));
+					set_rock_link(Index(i, j, k + 1));
+					set_rock_link(Index(i, j, k - 1));
+
+					continue; // Rock math is complete. Move to next voxel.
+				}
+
+				// ====================================================================
+				// 3. PORES & AIR (Active Fluid Network)
+				// ====================================================================
+				MatSetValue(coeff_mat, arridx, arridx, inv_dt, ADD_VALUES);
+				VecSetValue(sources_vec, arridx, field[idx] * inv_dt, ADD_VALUES);
+
+				auto set_pore_link = [&](Index neighbor_idx, double q_face)
+				{
+					if (!neighbor_idx.valid(global))
+						return;
+
+					RAWType neigh_type = img_data[neighbor_idx];
+
+					// Warren-Root Rock Sink Penalty
+					if (neigh_type == Rock)
+					{
+						// Pore loses acid to the rock: +alpha * C_pore - alpha * C_rock
+						MatSetValue(coeff_mat, arridx, arridx, alpha_transfer, ADD_VALUES);
+						MatSetValue(coeff_mat, arridx, neighbor_idx.arrayId(global), -alpha_transfer, ADD_VALUES);
+						return; // No advection/diffusion into rock
+					}
+
+					// Strict barrier for Precipitate and Sulphide (Advection = 0)
+					double actual_q_face = q_face;
+					if (neigh_type == Precipitate || neigh_type == Sulphide)
+					{
+						actual_q_face = 0.0;
+					}
+
+					// Standard Advection-Diffusion Math for Pore-to-Pore / Pore-to-Air
+					double D_eff = (neigh_type == Pore) ? (this->D * this->Dpore_fac) : this->D;
+					double diffusion_coeff = -D_eff / (dx * dx);
+
+					double coeff_neighbor = diffusion_coeff;
+					double coeff_self = -diffusion_coeff;
+
+					double adv_coeff = actual_q_face / dx;
+					if (adv_coeff > 0)
+						coeff_self += adv_coeff; // upwind: flux out
+					else
+						coeff_neighbor -= adv_coeff; // upwind: flux in
+
+					MatSetValue(coeff_mat, arridx, neighbor_idx.arrayId(global), theta * coeff_neighbor, ADD_VALUES);
+					MatSetValue(coeff_mat, arridx, arridx, theta * coeff_self, ADD_VALUES);
+
+					double explicit_rhs = -(coeff_self * field[idx] + coeff_neighbor * field[neighbor_idx]);
+					VecSetValue(sources_vec, arridx, (1.0 - theta) * explicit_rhs, ADD_VALUES);
+				};
+
+				// Apply standard links for the 6 faces
+				set_pore_link(Index(i + 1, j, k), flux_x[idx]);
+				set_pore_link(Index(i - 1, j, k), -flux_x[Index(i - 1, j, k)]);
+				set_pore_link(Index(i, j + 1, k), flux_y[idx]);
+				set_pore_link(Index(i, j - 1, k), -flux_y[Index(i, j - 1, k)]);
+				set_pore_link(Index(i, j, k + 1), flux_z[idx]);
+				set_pore_link(Index(i, j, k - 1), -flux_z[Index(i, j, k - 1)]);
 			}
 	MatAssemblyBegin(coeff_mat, MAT_FINAL_ASSEMBLY);
 	VecAssemblyBegin(sources_vec);
@@ -1405,7 +1567,7 @@ void Simulation::writeVTKFile(std::string fname_root, size_t tstep, size_t data_
 
 /**
  * @brief Initializes the fluid saturation field.
- * * Sets the saturation to 1.0 (fully saturated) in pore and sulphide voxels
+ * * Sets the saturation to 0.1 in pore and sulphide voxels
  * and 0.0 (dry) in rock and air voxels.
  */
 void Simulation::initSaturation()
@@ -1418,7 +1580,7 @@ void Simulation::initSaturation()
 				RAWType voxel_type = img_data[idx];
 				if (voxel_type == Pore || voxel_type == Sulphide)
 				{
-					saturation[idx] = 1.0;
+					saturation[idx] = 0.1;
 				}
 				else
 				{
@@ -1828,8 +1990,6 @@ bool Simulation::solveSaturation()
 
 	KSPSolve(ksp, sources_vec, solution_vec);
 
-	KSPSolve(ksp, sources_vec, solution_vec);
-
 	// Extract un-clamped min/max for logging
 	PetscInt min_loc, max_loc;
 	PetscReal min_val, max_val;
@@ -1842,38 +2002,50 @@ bool Simulation::solveSaturation()
 	KSPGetIterationNumber(ksp, &its);
 	KSPGetConvergedReason(ksp, &reason);
 
-	// Thermodynamic clamp (prevent numerical undershoot/overshoot)
-	for (int k = local.origin.k; k < (local.origin.k + local.extent.k); ++k)
+	// If the linear solver predicts massive over-saturation,
+	// reject the time step entirely before clamping deletes the mass.
+	physics_valid = true;
+	if (max_val > 1.05 || min_val < -0.05)
 	{
-		for (int j = local.origin.j; j < (local.origin.j + local.extent.j); ++j)
-		{
-			for (int i = local.origin.i; i < (local.origin.i + local.extent.i); ++i)
-			{
-				Index idx(i, j, k);
-
-				// Force saturation to remain strictly within [0.0, 1.0]
-				saturation[idx] = std::max(0.0, std::min(1.0, saturation[idx]));
-			}
-		}
+		physics_valid = false;
 	}
 
 	// Output Solver Statistics
 	if (mpi_rank == 0)
 	{
-		if (reason > 0)
+		if (reason > 0 && physics_valid)
 		{
 			std::cout << "    [Implicit Saturation] Converged in " << its << " iterations. (Reason Code: " << reason << ")" << std::endl;
 			std::cout << "    [Implicit Saturation] Raw Min: " << min_val << " | Raw Max: " << max_val << std::endl;
-			// return true;
 		}
 		else
 		{
-			std::cout << "    [Implicit Saturation] DIVERGED/FAILED in " << its << " iterations. (Error Code: " << reason << ")" << std::endl;
-			// Instead of aborting, send a flag for adapting the time step
-			// MPI_Abort(PETSC_COMM_WORLD, 1);
-			// return false;
+			// If it converged numerically but failed physically, override the reason
+			int fail_code = (reason > 0) ? -99 : reason;
+			std::cout << "    [Implicit Saturation] DIVERGED/FAILED in " << its << " iterations. (Error/Physics Code: " << fail_code << ")" << std::endl;
+			std::cout << "    [Implicit Saturation] Unphysical Raw Min: " << min_val << " | Raw Max: " << max_val << std::endl;
 		}
 	}
+
+	// Thermodynamic clamp (prevent numerical undershoot/overshoot)
+	// only applied if we accept the step
+	if (physics_valid)
+	{
+		for (int k = local.origin.k; k < (local.origin.k + local.extent.k); ++k)
+		{
+			for (int j = local.origin.j; j < (local.origin.j + local.extent.j); ++j)
+			{
+				for (int i = local.origin.i; i < (local.origin.i + local.extent.i); ++i)
+				{
+					Index idx(i, j, k);
+
+					// Force saturation to remain strictly within [0.0, 1.0]
+					saturation[idx] = std::max(0.0, std::min(1.0, saturation[idx]));
+				}
+			}
+		}
+	}
+
 	// Ensure all MPI ranks return the same success status based on rank 0's evaluation
 	int success = (reason > 0) ? 1 : 0;
 	MPI_Bcast(&success, 1, MPI_INT, 0, PETSC_COMM_WORLD);
@@ -2149,6 +2321,10 @@ void Simulation::saveState()
 	backup_pressure.assign(pressure.getData().get(), pressure.getData().get() + total_size);
 	backup_conc.assign(conc.getData().get(), conc.getData().get() + total_size);
 	backup_conc_acid.assign(conc_acid.getData().get(), conc_acid.getData().get() + total_size);
+
+	backup_flux_x.assign(flux_x.getData().get(), flux_x.getData().get() + total_size);
+	backup_flux_y.assign(flux_y.getData().get(), flux_y.getData().get() + total_size);
+	backup_flux_z.assign(flux_z.getData().get(), flux_z.getData().get() + total_size);
 }
 
 void Simulation::restoreState()
@@ -2163,6 +2339,10 @@ void Simulation::restoreState()
 	std::copy(backup_pressure.begin(), backup_pressure.end(), pressure.getData().get());
 	std::copy(backup_conc.begin(), backup_conc.end(), conc.getData().get());
 	std::copy(backup_conc_acid.begin(), backup_conc_acid.end(), conc_acid.getData().get());
+
+	std::copy(backup_flux_x.begin(), backup_flux_x.end(), flux_x.getData().get());
+	std::copy(backup_flux_y.begin(), backup_flux_y.end(), flux_y.getData().get());
+	std::copy(backup_flux_z.begin(), backup_flux_z.end(), flux_z.getData().get());
 
 	// Rebuild the derived physics and MPI boundaries from the restored state
 	updateRelativePermeability();

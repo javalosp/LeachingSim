@@ -79,6 +79,10 @@ public:
 	std::vector<double> backup_conc;
 	std::vector<double> backup_conc_acid;
 
+	std::vector<double> backup_flux_x;
+	std::vector<double> backup_flux_y;
+	std::vector<double> backup_flux_z;
+
 	// Debugging
 	bool debug_mode = false;
 	void auditLinearSystem(Mat A, Vec b, std::string label);
@@ -90,6 +94,8 @@ public:
 	// Microporosity controls
 	bool enable_microporosity;
 	double rock_D_fac; // Multiplier to penalise diffusion inside the solid rock
+
+	bool physics_valid;
 
 	// Global leaching trackers
 	unsigned long long initial_sulphide_count;
@@ -128,6 +134,9 @@ public:
 	bool use_implicit_saturation;
 	double solid_density; // Density of the precipitate
 	double porosity;
+
+	// Warren-Root Dual Porosity Mass Transfer
+    double alpha_transfer;
 
 	// Public Data Fields
 	// Input & Material Properties

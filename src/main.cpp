@@ -36,7 +36,7 @@ int main(int argc, char *argv[])
 
 		// Command line argument parsing
 		opts::options_description cmd_opts("Command line arguments");
-		cmd_opts.add_options()("help,h", "Print this message and exit.")("raw-file", opts::value<string>()->required(), "Input RAW file specifying the domain.")("xext", opts::value<int>()->required(), "The x extent of the domain")("yext", opts::value<int>()->required(), "The y extent of the domain")("zext", opts::value<int>()->required(), "The z extent of the domain")("out_dir", opts::value<string>()->default_value("./output"), "The output directory")("header_size", opts::value<size_t>()->default_value(0), "RAW file header size in bytes.")("voxel_size", opts::value<double>()->default_value(1.), "Size of voxels (m).")("D", opts::value<double>()->default_value(1.), "Diffusion constant (m^2/s).")("kext", opts::value<double>()->default_value(1.), "Mass transfer to exterior.")("kreac", opts::value<double>()->default_value(1.), "Reaction transfer from sulphide grains.")("Dpore_fac", opts::value<double>()->default_value(1.), "Pore diffusivity enhancement factor")("dt", opts::value<double>()->default_value(1.), "Simulation time step (s).")("tmax", opts::value<double>()->default_value(10.), "Maximum simulation time (s).")("nout", opts::value<int>()->default_value(1), "Output every N-th time step.")("seed", opts::value<size_t>()->default_value(42), "Pseudo-RNG seed value.")("csat", opts::value<double>()->default_value(0.95), "Saturation concentration limit.")("evap_flux", opts::value<double>()->default_value(0.0), "Evaporative flux (m/s)")("theta", opts::value<double>()->default_value(1.0), "Time scheme (0=Explicit, 0.5=Crank-Nicolson, 1.0=Implicit)")("instant_precip", opts::value<bool>()->default_value(false), "Enable instant pore blinding upon supersaturation")("porosity", opts::value<double>()->default_value(0.1), "Material porosity")("top_pressure", opts::value<double>()->default_value(10000.0), "Applied pressure head at the top boundary (Pa, simulates irrigation)")("max_cap_grad", opts::value<double>()->default_value(50000.0), "Maximum capillary pressure gradient (Pa/m) for explicit solver stability")("implicit_sat", opts::value<bool>()->default_value(false), "Toggle: True = Implicit PETSc Solver, False = Explicit Sub-stepping")("restart_step", opts::value<int>()->default_value(0), "Step to restart from (0 = fresh start)")("chk_freq", opts::value<int>()->default_value(1000), "Number of steps between saving binary checkpoints")("debug", opts::value<bool>()->default_value(false), "Enable detailed runtime debugging and NaN checks")("use_out_time", opts::value<bool>()->default_value(false), "Toggle: True = Output based on physical time, False = Output based on iterations (nout)")("out_time", opts::value<double>()->default_value(3600.0), "Physical time interval between VTK outputs (seconds)")("time_scalar", opts::value<double>()->default_value(1.0), "Physical time accelerator for solid mass transfer (fast-forward factor)")("enable_microporosity", opts::value<bool>()->default_value(false), "Toggle: Enable acid diffusion and leaching through solid rock matrix")("rock_D_fac", opts::value<double>()->default_value(1e-4), "Multiplier for the diffusion coefficient inside the rock matrix");
+		cmd_opts.add_options()("help,h", "Print this message and exit.")("raw-file", opts::value<string>()->required(), "Input RAW file specifying the domain.")("xext", opts::value<int>()->required(), "The x extent of the domain")("yext", opts::value<int>()->required(), "The y extent of the domain")("zext", opts::value<int>()->required(), "The z extent of the domain")("out_dir", opts::value<string>()->default_value("./output"), "The output directory")("header_size", opts::value<size_t>()->default_value(0), "RAW file header size in bytes.")("voxel_size", opts::value<double>()->default_value(1.), "Size of voxels (m).")("D", opts::value<double>()->default_value(1.), "Diffusion constant (m^2/s).")("kext", opts::value<double>()->default_value(1.), "Mass transfer to exterior.")("kreac", opts::value<double>()->default_value(1.), "Reaction transfer from sulphide grains.")("Dpore_fac", opts::value<double>()->default_value(1.), "Pore diffusivity enhancement factor")("dt", opts::value<double>()->default_value(1.), "Simulation time step (s).")("tmax", opts::value<double>()->default_value(10.), "Maximum simulation time (s).")("nout", opts::value<int>()->default_value(1), "Output every N-th time step.")("seed", opts::value<size_t>()->default_value(42), "Pseudo-RNG seed value.")("csat", opts::value<double>()->default_value(0.95), "Saturation concentration limit.")("evap_flux", opts::value<double>()->default_value(0.0), "Evaporative flux (m/s)")("theta", opts::value<double>()->default_value(1.0), "Time scheme (0=Explicit, 0.5=Crank-Nicolson, 1.0=Implicit)")("instant_precip", opts::value<bool>()->default_value(false), "Enable instant pore blinding upon supersaturation")("porosity", opts::value<double>()->default_value(0.1), "Material porosity")("top_pressure", opts::value<double>()->default_value(10000.0), "Applied pressure head at the top boundary (Pa, simulates irrigation)")("max_cap_grad", opts::value<double>()->default_value(50000.0), "Maximum capillary pressure gradient (Pa/m) for explicit solver stability")("implicit_sat", opts::value<bool>()->default_value(false), "Toggle: True = Implicit PETSc Solver, False = Explicit Sub-stepping")("restart_step", opts::value<int>()->default_value(0), "Step to restart from (0 = fresh start)")("chk_freq", opts::value<int>()->default_value(1000), "Number of steps between saving binary checkpoints")("debug", opts::value<bool>()->default_value(false), "Enable detailed runtime debugging and NaN checks")("use_out_time", opts::value<bool>()->default_value(false), "Toggle: True = Output based on physical time, False = Output based on iterations (nout)")("out_time", opts::value<double>()->default_value(3600.0), "Physical time interval between VTK outputs (seconds)")("time_scalar", opts::value<double>()->default_value(1.0), "Physical time accelerator for solid mass transfer (fast-forward factor)")("enable_microporosity", opts::value<bool>()->default_value(false), "Toggle: Enable acid diffusion and leaching through solid rock matrix")("rock_D_fac", opts::value<double>()->default_value(1e-4), "Multiplier for the diffusion coefficient inside the rock matrix")("alpha_transfer", opts::value<double>()->default_value(1e-5), "Mass transfer coefficient for acid entering the solid rock matrix");
 
 		/* Simluation cases can vary depending on some options values, e.g.
 		Leaching case
@@ -83,6 +83,7 @@ int main(int argc, char *argv[])
 		the_simulation.time_scalar = cmd["time_scalar"].as<double>();
 		the_simulation.enable_microporosity = cmd["enable_microporosity"].as<bool>();
 		the_simulation.rock_D_fac = cmd["rock_D_fac"].as<double>();
+		the_simulation.alpha_transfer = cmd["alpha_transfer"].as<double>();
 
 		// Initialise some constants
 		the_simulation.vg_n = 2.0; // Must be strictly > 1.0
@@ -260,6 +261,7 @@ int main(int argc, char *argv[])
 			std::cout << "  Output Mode                      : " << output_mode << std::endl;
 			std::cout << "  Output Frequency                 : " << output_dump_frequency << std::endl;
 			std::cout << "  Rock Microporosity               : " << (the_simulation.enable_microporosity ? "True (Active)" : "False (Inactive)") << std::endl;
+			std::cout << "  Pore - Rock Transfer factor      : " << the_simulation.alpha_transfer << std::endl;
 			std::cout << "==================================================\n"
 					  << std::endl;
 		}
@@ -352,9 +354,22 @@ int main(int argc, char *argv[])
 					the_simulation.saturation.exchangePadding(MPI_DOUBLE);
 				}
 
-				// -------------------------------------------------------------
-				// B. Post-Picard Physics (Only executes if hydrodynamics succeeded)
-				// -------------------------------------------------------------
+				// Picard Loop Escape Catcher
+				// If the Picard loop finished, but the final iteration was still 
+				// physically invalid (e.g. Saturation = 8000%), we intercept it 
+				// here and force the retry manager to roll back.
+				if (step_successful && the_simulation.use_implicit_saturation)
+				{
+					if (!the_simulation.physics_valid)
+					{
+						if (mpi_rank == 0)
+							cout << "    [Warning] Picard loop completed but state remains unphysical. Forcing rollback!" << endl;
+						
+						step_successful = false; 
+					}
+				}
+
+				// Post-Picard Physics (Only executes if hydrodynamics succeeded)
 				if (step_successful)
 				{
 					the_simulation.handleSurfaceEffects();
